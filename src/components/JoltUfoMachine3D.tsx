@@ -19,7 +19,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { GachaBoxItem } from '@/types/gacha';
-import { GACHA_PHYSICS, getBoxDimensions, getBoxRewardAmount, isBoxAtInitialPose, isPlushSlot } from '@/constants/gacha';
+import { GACHA_PHYSICS, getBoxDimensions, getBoxRewardAmount, getSandboxRedBarHalfZ, isBoxAtInitialPose, isPlushSlot } from '@/constants/gacha';
 import { DEFAULT_PHYSICS_TUNING, PhysicsTuning, PRIZE_SPECS, PrizeSpec } from '@/constants/prizes';
 import { isPrizeSpanningRedAndBlueBar } from '@/lib/gachaEffects';
 
@@ -318,6 +318,8 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
   const cameraViewRef = useRef<CameraView>('front');
   const frontTiptoeDegRef = useRef(0);
   const tuningRef = useRef<PhysicsTuning>(tuning);
+  const targetRedBarHalfZ = sandboxMode ? getSandboxRedBarHalfZ(machineIndex) : GACHA_PHYSICS.BAR_HALF_Z;
+  const redBarHalfZRef = useRef<number>(targetRedBarHalfZ);
   const itemsRef = useRef<GachaBoxItem[]>(items);
   const onTurnFinishRef = useRef(onTurnFinish);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -335,6 +337,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
   itemsRef.current = items;
   tuningRef.current = tuning;
+  redBarHalfZRef.current = targetRedBarHalfZ;
 
   useEffect(() => {
     soundEnabledRef.current = soundEnabled;
@@ -468,6 +471,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
     startDescending: () => void;
     applyLiveTuning: (t: PhysicsTuning) => void;
     rebuildPrizesForTuning: () => void;
+    updateRedBarSpacing: (halfZ: number) => void;
   } | null>(null);
 
   // 새 턴 시작 감지 -> 정면뷰 자동 전환 + 최신 서버 좌표 반영 + ready_right + 초기상태일 때만 start.mp3 재생
@@ -513,14 +517,17 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
     }
   }, [items, engineReady, isMyTurn, isFinishing]);
 
-  // 뽑기판 전환 시 대기 크레인 홈 복귀
+  // 뽑기판 전환 시 대기 크레인 홈 복귀 + 테스트서버 상품별 빨간 Bar 간격 갱신
   useEffect(() => {
+    if (engineReady) {
+      simControlRef.current?.updateRedBarSpacing(targetRedBarHalfZ);
+    }
     if (engineReady && !isMyTurn && !isFinishing && phaseRef.current === 'idle') {
       setDroppedThisTurn(0);
       simControlRef.current?.resetClawToHome();
       simControlRef.current?.syncFromItems(itemsRef.current);
     }
-  }, [machineIndex, engineReady, isMyTurn, isFinishing]);
+  }, [machineIndex, targetRedBarHalfZ, engineReady, isMyTurn, isFinishing]);
 
   // Jolt Physics 1.1.2 WASM + Three.js 메인 씬 초기화
   useEffect(() => {
@@ -761,25 +768,30 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           roughness: 0.55,
         });
 
+        const initRedHalfZ = redBarHalfZRef.current;
         const allBarSpecs = [
-          { y: GACHA_PHYSICS.BAR_Y, z: -GACHA_PHYSICS.BAR_HALF_Z, isOuter: false },
-          { y: GACHA_PHYSICS.BAR_Y, z: GACHA_PHYSICS.BAR_HALF_Z, isOuter: false },
-          { y: GACHA_PHYSICS.OUTER_BAR_Y, z: -GACHA_PHYSICS.OUTER_BAR_HALF_Z, isOuter: true },
-          { y: GACHA_PHYSICS.OUTER_BAR_Y, z: GACHA_PHYSICS.OUTER_BAR_HALF_Z, isOuter: true },
+          { y: GACHA_PHYSICS.BAR_Y, z: -initRedHalfZ, isOuter: false, sign: -1 as const },
+          { y: GACHA_PHYSICS.BAR_Y, z: initRedHalfZ, isOuter: false, sign: 1 as const },
+          { y: GACHA_PHYSICS.OUTER_BAR_Y, z: -GACHA_PHYSICS.OUTER_BAR_HALF_Z, isOuter: true, sign: -1 as const },
+          { y: GACHA_PHYSICS.OUTER_BAR_Y, z: GACHA_PHYSICS.OUTER_BAR_HALF_Z, isOuter: true, sign: 1 as const },
         ];
         const ringXPositions = [-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5];
+        const redBarMeshes: Array<{ mesh: THREE.Mesh; sign: -1 | 1 }> = [];
+        const redRingMeshes: Array<{ mesh: THREE.Mesh; sign: -1 | 1 }> = [];
 
-        allBarSpecs.forEach(({ y: by, z: bz, isOuter }) => {
+        allBarSpecs.forEach(({ y: by, z: bz, isOuter, sign }) => {
           const barMesh = new THREE.Mesh(barGeo, barMatVisual);
           barMesh.position.set(0, by, bz);
           barMesh.castShadow = true;
           barMesh.receiveShadow = true;
           cabinetGroup.add(barMesh);
+          if (!isOuter) redBarMeshes.push({ mesh: barMesh, sign });
 
           for (const rx of ringXPositions) {
             const ring = new THREE.Mesh(ringGeo, isOuter ? blueRingMat : redRingMat);
             ring.position.set(rx, by, bz);
             cabinetGroup.add(ring);
+            if (!isOuter) redRingMeshes.push({ mesh: ring, sign });
           }
         });
 
@@ -921,8 +933,10 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
         // 4 Parallel Bars + Physical Silicone Rings
         const qBar = Jolt.Quat.prototype.sRotation(new Jolt.Vec3(0, 0, 1), Math.PI / 2);
+        const redBarBodyEntries: Array<{ id: JoltNS.BodyID; sign: -1 | 1 }> = [];
         const redRingBodyIds: JoltNS.BodyID[] = [];
-        allBarSpecs.forEach(({ y: by, z: bz, isOuter }) => {
+        const redRingBodyEntries: Array<{ id: JoltNS.BodyID; x: number; sign: -1 | 1 }> = [];
+        allBarSpecs.forEach(({ y: by, z: bz, isOuter, sign }) => {
           const barShape = new Jolt.CylinderShape(GACHA_PHYSICS.BAR_LENGTH / 2, GACHA_PHYSICS.BAR_RADIUS, 0.02);
           const bcs = new Jolt.BodyCreationSettings(
             barShape,
@@ -933,7 +947,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           );
           bcs.mFriction = isOuter ? 0.34 : 0.28;
           bcs.mRestitution = 0.0;
-          bi.AddBody(bi.CreateBody(bcs).GetID(), Jolt.EActivation_DontActivate);
+          const barBody = bi.CreateBody(bcs);
+          bi.AddBody(barBody.GetID(), Jolt.EActivation_DontActivate);
+          if (!isOuter) redBarBodyEntries.push({ id: barBody.GetID(), sign });
 
           for (const rx of ringXPositions) {
             const ringShape = new Jolt.CylinderShape(0.022, GACHA_PHYSICS.BAR_RADIUS + 0.006, 0.008);
@@ -948,7 +964,10 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             rbcs.mRestitution = 0.0;
             const rb = bi.CreateBody(rbcs);
             bi.AddBody(rb.GetID(), Jolt.EActivation_DontActivate);
-            if (!isOuter) redRingBodyIds.push(rb.GetID());
+            if (!isOuter) {
+              redRingBodyIds.push(rb.GetID());
+              redRingBodyEntries.push({ id: rb.GetID(), x: rx, sign });
+            }
           }
         });
 
@@ -1459,6 +1478,24 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           });
         };
 
+        const updateRedBarSpacing = (halfZ: number) => {
+          redBarHalfZRef.current = halfZ;
+          for (const item of redBarMeshes) {
+            item.mesh.position.z = item.sign * halfZ;
+          }
+          for (const item of redRingMeshes) {
+            item.mesh.position.z = item.sign * halfZ;
+          }
+          for (const entry of redBarBodyEntries) {
+            tmpRVec.Set(0, GACHA_PHYSICS.BAR_Y, entry.sign * halfZ);
+            bi.SetPosition(entry.id, tmpRVec, Jolt.EActivation_DontActivate);
+          }
+          for (const entry of redRingBodyEntries) {
+            tmpRVec.Set(entry.x, GACHA_PHYSICS.BAR_Y, entry.sign * halfZ);
+            bi.SetPosition(entry.id, tmpRVec, Jolt.EActivation_DontActivate);
+          }
+        };
+
         simControlRef.current = {
           syncFromItems: (nextItems) => syncFromItems(nextItems, false),
           resetClawToHome,
@@ -1466,6 +1503,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           startDescending,
           applyLiveTuning,
           rebuildPrizesForTuning,
+          updateRedBarSpacing,
         };
 
         syncFromItems(itemsRef.current);
@@ -1566,9 +1604,10 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                     }
                   } else {
                     const hz = headPos.GetZ();
+                    const activeRedHalfZ = redBarHalfZRef.current;
                     const nearCentralRedBar =
-                      Math.abs(hz - GACHA_PHYSICS.BAR_HALF_Z) <= 0.28 ||
-                      Math.abs(hz + GACHA_PHYSICS.BAR_HALF_Z) <= 0.28;
+                      Math.abs(hz - activeRedHalfZ) <= 0.28 ||
+                      Math.abs(hz + activeRedHalfZ) <= 0.28;
                     if (nearCentralRedBar) {
                       sim.effectTriggeredThisTurn = true;
                       triggerExtremeDrr();
@@ -1679,7 +1718,8 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                       { x: pp.GetX(), y: pp.GetY(), z: pp.GetZ() },
                       { x: pq.GetX(), y: pq.GetY(), z: pq.GetZ(), w: pq.GetW() },
                       dims,
-                      GACHA_PHYSICS.DROP_Y_THRESHOLD
+                      GACHA_PHYSICS.DROP_Y_THRESHOLD,
+                      redBarHalfZRef.current
                     )
                   ) {
                     sim.nearNearTriggeredThisTurn = true;
