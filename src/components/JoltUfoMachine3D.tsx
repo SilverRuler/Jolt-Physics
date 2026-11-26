@@ -422,11 +422,11 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
     }
   }, []);
 
-  const triggerStartPopup = useCallback(() => {
+  const triggerStartPopup = useCallback((playStartAudio: boolean) => {
     setShowStartPopup(true);
     if (startTimeoutRef.current) clearTimeout(startTimeoutRef.current);
     startTimeoutRef.current = setTimeout(() => setShowStartPopup(false), 1200);
-    if (soundEnabledRef.current && startAudioRef.current) {
+    if (playStartAudio && soundEnabledRef.current && startAudioRef.current) {
       try {
         startAudioRef.current.currentTime = 0;
         startAudioRef.current.play().catch(() => {});
@@ -470,15 +470,18 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
     rebuildPrizesForTuning: () => void;
   } | null>(null);
 
-  // 새 턴 시작 감지 -> 정면뷰 자동 전환 + 최신 서버 좌표 반영 + ready_right + start.mp3 & 뽑기 시작! 팝업
+  // 새 턴 시작 감지 -> 정면뷰 자동 전환 + 최신 서버 좌표 반영 + ready_right + 초기상태일 때만 start.mp3 재생
   useEffect(() => {
     if (isMyTurn && turnKey && engineReady) {
       setCameraView('front');
       cameraViewRef.current = 'front';
       setDroppedThisTurn(0);
-      simControlRef.current?.prepareTurnStart(itemsRef.current);
+      const curItems = itemsRef.current;
+      const isInitialPoseOnly =
+        curItems.length > 0 && curItems.every((it) => isBoxAtInitialPose(it));
+      simControlRef.current?.prepareTurnStart(curItems);
       setCranePhase('ready_right');
-      triggerStartPopup();
+      triggerStartPopup(isInitialPoseOnly);
     } else if (!isMyTurn && phaseRef.current !== 'idle') {
       setCranePhase('idle');
     }
@@ -1431,13 +1434,13 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             const startPos = sim.turnStartPositions.get(ent.data.id) || ent.data.position;
             const startQuat = sim.turnStartQuats.get(ent.data.id) || ent.data.quaternion;
             const wasInitial = isBoxAtInitialPose(ent.data);
-            const movedHoriz =
-              Math.hypot(px - startPos[0], pz - startPos[2]) > 0.025 ||
-              Math.abs(py - startPos[1]) > 0.035;
+            const movedSlightly =
+              Math.hypot(px - startPos[0], pz - startPos[2]) > 0.008 ||
+              Math.abs(py - startPos[1]) > 0.015;
             const quatDot = Math.abs(
               qx * startQuat[0] + qy * startQuat[1] + qz * startQuat[2] + qw * startQuat[3]
             );
-            const nextIsInitial = wasInitial && !movedHoriz && quatDot >= 0.999;
+            const nextIsInitial = wasInitial && !movedSlightly && quatDot >= 0.9998;
             ent.data.isInitialState = nextIsInitial;
 
             return {
