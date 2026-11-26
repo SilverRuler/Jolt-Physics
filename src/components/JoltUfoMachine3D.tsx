@@ -258,11 +258,11 @@ function createPlushMaterial(imgSrc: string): THREE.MeshStandardMaterial {
   });
 }
 
-// 좌/우 실제 Jolt 3-세그먼트 완전한 <> 다이아몬드 갈고리 형상 (닫힘 시 하단 끝단이 중앙 x≈0에서 맞닿아 틈 없음)
+// 좌/우 실제 Jolt 3-세그먼트 완전한 <> 다이아몬드 갈고리 형상 (전체 25% 확대 · 닫힘 시 하단 끝단이 중앙 x≈0에서 맞닿아 틈 없음)
 const ARM_SEGMENTS = [
-  { pos: [0.09, -0.17, 0] as const, rotZ: 0.49, half: [0.028, 0.195, 0.045] as const, isTip: false },
-  { pos: [0.08, -0.50, 0] as const, rotZ: -0.56, half: [0.026, 0.19, 0.052] as const, isTip: false },
-  { pos: [-0.10, -0.67, 0] as const, rotZ: 0.14, half: [0.085, 0.024, 0.072] as const, isTip: true },
+  { pos: [0.1125, -0.2125, 0] as const, rotZ: 0.49, half: [0.035, 0.244, 0.056] as const, isTip: false },
+  { pos: [0.10, -0.625, 0] as const, rotZ: -0.56, half: [0.0325, 0.238, 0.065] as const, isTip: false },
+  { pos: [-0.125, -0.8375, 0] as const, rotZ: 0.14, half: [0.106, 0.030, 0.090] as const, isTip: true },
 ];
 
 const CLAW_OPEN_ANGLE = 0.72;
@@ -556,8 +556,8 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           if (view === 'top') {
             return {
               fov,
-              pos: new THREE.Vector3(0, 6.2 * Math.max(1, scale * 0.88), 0.56),
-              look: new THREE.Vector3(0, 0.78, 0),
+              pos: new THREE.Vector3(0, 7.45 * Math.max(1, scale * 0.88), 0.62),
+              look: new THREE.Vector3(0, 0.78, 0.08),
             };
           }
           if (view === 'right') {
@@ -788,7 +788,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         scene.add(ufoHeadGroup);
 
         const ufoTop = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.19, 0.30, 0.16, 24),
+          new THREE.CylinderGeometry(0.24, 0.375, 0.20, 24),
           new THREE.MeshStandardMaterial({
             color: '#0ea5e9',
             emissive: '#0284c7',
@@ -797,12 +797,12 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             roughness: 0.22,
           })
         );
-        ufoTop.position.set(0, 0.06, 0);
+        ufoTop.position.set(0, 0.08, 0);
         ufoTop.castShadow = true;
         ufoHeadGroup.add(ufoTop);
 
         const ufoRing = new THREE.Mesh(
-          new THREE.TorusGeometry(0.28, 0.03, 12, 24),
+          new THREE.TorusGeometry(0.35, 0.038, 12, 24),
           new THREE.MeshStandardMaterial({
             color: '#fbbf24',
             emissive: '#f59e0b',
@@ -840,7 +840,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
         const buildArmVisual = (side: -1 | 1) => {
           const group = new THREE.Group();
-          const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.12, 12), hingePinMat);
+          const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.15, 12), hingePinMat);
           pin.rotation.x = Math.PI / 2;
           group.add(pin);
 
@@ -1015,7 +1015,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         bi.AddBody(gantryBody.GetID(), Jolt.EActivation_Activate);
 
         const headBCS = new Jolt.BodyCreationSettings(
-          new Jolt.CylinderShape(0.08, 0.23, 0.02),
+          new Jolt.CylinderShape(0.10, 0.29, 0.02),
           new Jolt.RVec3(homeX, homeY, homeZ),
           Jolt.Quat.prototype.sIdentity(),
           Jolt.EMotionType_Dynamic,
@@ -1089,7 +1089,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             );
           }
           const shapeRes = comp.Create();
-          const pivotX = homeX + side * 0.22;
+          const pivotX = homeX + side * 0.275;
           const pivotY = homeY - 0.02;
           const abcs = new Jolt.BodyCreationSettings(
             shapeRes.Get(),
@@ -1349,11 +1349,11 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           bi.SetPositionAndRotation(headBody.GetID(), tmpRVec, tmpIdQuat, Jolt.EActivation_Activate);
           bi.SetLinearAndAngularVelocity(headBody.GetID(), tmpZeroVec, tmpZeroVec);
 
-          tmpRVec.Set(homeX - 0.22, homeY - 0.02, homeZ);
+          tmpRVec.Set(homeX - 0.275, homeY - 0.02, homeZ);
           bi.SetPositionAndRotation(leftArm.body.GetID(), tmpRVec, tmpIdQuat, Jolt.EActivation_Activate);
           bi.SetLinearAndAngularVelocity(leftArm.body.GetID(), tmpZeroVec, tmpZeroVec);
 
-          tmpRVec.Set(homeX + 0.22, homeY - 0.02, homeZ);
+          tmpRVec.Set(homeX + 0.275, homeY - 0.02, homeZ);
           bi.SetPositionAndRotation(rightArm.body.GetID(), tmpRVec, tmpIdQuat, Jolt.EActivation_Activate);
           bi.SetLinearAndAngularVelocity(rightArm.body.GetID(), tmpZeroVec, tmpZeroVec);
 
@@ -1710,7 +1710,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           trolleyMesh.position.set(sim.gantryX, 3.82, sim.gantryZ);
 
           tmpThreePosA.set(sim.gantryX, 3.79, sim.gantryZ);
-          tmpThreePosB.set(hp.GetX(), hp.GetY() + 0.14, hp.GetZ());
+          tmpThreePosB.set(hp.GetX(), hp.GetY() + 0.18, hp.GetZ());
           tmpThreeDir.subVectors(tmpThreePosB, tmpThreePosA);
           const cableLen = Math.max(0.08, tmpThreeDir.length());
           cableMesh.scale.set(1, cableLen, 1);
