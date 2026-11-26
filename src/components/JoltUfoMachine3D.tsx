@@ -94,6 +94,41 @@ interface PlushGeoJson {
   indices: number[];
 }
 
+interface GachaLiveFrame {
+  machineIndex: number;
+  turnKey: string;
+  member: string;
+  phase: string;
+  gantryX: number;
+  gantryZ: number;
+  headPos: [number, number, number];
+  headQuat: [number, number, number, number];
+  leftArmPos: [number, number, number];
+  leftArmQuat: [number, number, number, number];
+  rightArmPos: [number, number, number];
+  rightArmQuat: [number, number, number, number];
+  items: Array<{
+    id: string;
+    position: [number, number, number];
+    quaternion: [number, number, number, number];
+  }>;
+  effect?: 'start' | 'balance_catch' | 'extreme_drr' | 'near_near' | 'finish_win' | null;
+  effectSeq?: number;
+  ts: number;
+}
+
+const LIVE_PHASE_LABELS: Record<string, string> = {
+  ready_right: '우(→) 이동 대기',
+  moving_right: '우(→) 이동 중',
+  ready_up: '위(↑) 이동 대기',
+  moving_up: '위(↑) 이동 중',
+  descending: '집게 하강 중',
+  closing: '상품 잡는 중',
+  lifting: '들어올리는 중',
+  releasing: '드랍 중',
+  settling: '안정화 중',
+};
+
 let joltModulePromise: Promise<typeof JoltNS> | null = null;
 function getJoltModule(): Promise<typeof JoltNS> {
   if (!joltModulePromise) {
@@ -102,24 +137,27 @@ function getJoltModule(): Promise<typeof JoltNS> {
   return joltModulePromise;
 }
 
-let cachedSandroneGeoData: PlushGeoJson | null = null;
-let sandroneGeoPromise: Promise<PlushGeoJson | null> | null = null;
+const cachedPlushGeoMap = new Map<string, PlushGeoJson>();
+const plushGeoPromiseMap = new Map<string, Promise<PlushGeoJson | null>>();
 
-function loadSandronePlushGeoData(): Promise<PlushGeoJson | null> {
-  if (cachedSandroneGeoData) return Promise.resolve(cachedSandroneGeoData);
-  if (!sandroneGeoPromise) {
-    sandroneGeoPromise = fetch('/assets/sandrone_plush_geo.json')
+function loadPlushGeoData(geoSrc: string): Promise<PlushGeoJson | null> {
+  const hit = cachedPlushGeoMap.get(geoSrc);
+  if (hit) return Promise.resolve(hit);
+  let prom = plushGeoPromiseMap.get(geoSrc);
+  if (!prom) {
+    prom = fetch(geoSrc)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: PlushGeoJson | null) => {
         if (data && Array.isArray(data.positions) && Array.isArray(data.indices)) {
-          cachedSandroneGeoData = data;
+          cachedPlushGeoMap.set(geoSrc, data);
           return data;
         }
         return null;
       })
       .catch(() => null);
+    plushGeoPromiseMap.set(geoSrc, prom);
   }
-  return sandroneGeoPromise;
+  return prom;
 }
 
 function buildBufferGeometryFromPlushData(data: PlushGeoJson): THREE.BufferGeometry {
@@ -312,6 +350,8 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
   const [showStartPopup, setShowStartPopup] = useState(false);
   const [showNearNear, setShowNearNear] = useState(false);
   const [showFinishWin, setShowFinishWin] = useState(false);
+  const [spectateLiveActive, setSpectateLiveActive] = useState(false);
+  const [spectatePhase, setSpectatePhase] = useState<string>('');
 
   const phaseRef = useRef<CranePhase>('idle');
   const soundEnabledRef = useRef(true);
@@ -322,6 +362,17 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
   const redBarHalfZRef = useRef<number>(targetRedBarHalfZ);
   const itemsRef = useRef<GachaBoxItem[]>(items);
   const onTurnFinishRef = useRef(onTurnFinish);
+  const isMyTurnRef = useRef(isMyTurn);
+  const lockedByOtherRef = useRef<string | null>(lockedByOther);
+  const machineIndexRef = useRef(machineIndex);
+  const selectedMemberRef = useRef(selectedMember);
+  const turnKeyRef = useRef<string | null>(turnKey);
+  const sandboxModeRef = useRef(sandboxMode);
+  const spectateFrameRef = useRef<GachaLiveFrame | null>(null);
+  const lastLivePostTimeRef = useRef(0);
+  const livePostInFlightRef = useRef(false);
+  const liveEffectRef = useRef<{ effect: GachaLiveFrame['effect']; seq: number }>({ effect: null, seq: 0 });
+  const lastSpectateEffectSeqRef = useRef(0);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const drrAudioRef = useRef<HTMLAudioElement | null>(null);
   const bcAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -338,6 +389,12 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
   itemsRef.current = items;
   tuningRef.current = tuning;
   redBarHalfZRef.current = targetRedBarHalfZ;
+  isMyTurnRef.current = isMyTurn;
+  lockedByOtherRef.current = lockedByOther;
+  machineIndexRef.current = machineIndex;
+  selectedMemberRef.current = selectedMember;
+  turnKeyRef.current = turnKey;
+  sandboxModeRef.current = sandboxMode;
 
   useEffect(() => {
     soundEnabledRef.current = soundEnabled;
@@ -403,6 +460,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
   const triggerExtremeDrr = useCallback(() => {
     setShowExtremeDrr(true);
+    if (isMyTurnRef.current) {
+      liveEffectRef.current = { effect: 'extreme_drr', seq: liveEffectRef.current.seq + 1 };
+    }
     if (drrTimeoutRef.current) clearTimeout(drrTimeoutRef.current);
     drrTimeoutRef.current = setTimeout(() => setShowExtremeDrr(false), 1000);
     if (soundEnabledRef.current && drrAudioRef.current) {
@@ -415,6 +475,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
   const triggerBalanceCatch = useCallback(() => {
     setShowBalanceCatch(true);
+    if (isMyTurnRef.current) {
+      liveEffectRef.current = { effect: 'balance_catch', seq: liveEffectRef.current.seq + 1 };
+    }
     if (bcTimeoutRef.current) clearTimeout(bcTimeoutRef.current);
     bcTimeoutRef.current = setTimeout(() => setShowBalanceCatch(false), 1500);
     if (soundEnabledRef.current && bcAudioRef.current) {
@@ -427,6 +490,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
   const triggerStartPopup = useCallback((playStartAudio: boolean) => {
     setShowStartPopup(true);
+    if (isMyTurnRef.current) {
+      liveEffectRef.current = { effect: 'start', seq: liveEffectRef.current.seq + 1 };
+    }
     if (startTimeoutRef.current) clearTimeout(startTimeoutRef.current);
     startTimeoutRef.current = setTimeout(() => setShowStartPopup(false), 1200);
     if (playStartAudio && soundEnabledRef.current && startAudioRef.current) {
@@ -439,6 +505,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
   const triggerNearNear = useCallback(() => {
     setShowNearNear(true);
+    if (isMyTurnRef.current) {
+      liveEffectRef.current = { effect: 'near_near', seq: liveEffectRef.current.seq + 1 };
+    }
     if (nearTimeoutRef.current) clearTimeout(nearTimeoutRef.current);
     nearTimeoutRef.current = setTimeout(() => setShowNearNear(false), 1600);
     if (soundEnabledRef.current) {
@@ -454,6 +523,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
   const triggerFinishWin = useCallback(() => {
     setShowFinishWin(true);
+    if (isMyTurnRef.current) {
+      liveEffectRef.current = { effect: 'finish_win', seq: liveEffectRef.current.seq + 1 };
+    }
     if (finishTimeoutRef.current) clearTimeout(finishTimeoutRef.current);
     finishTimeoutRef.current = setTimeout(() => setShowFinishWin(false), 2000);
     if (soundEnabledRef.current && finishAudioRef.current) {
@@ -463,6 +535,62 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
       } catch {}
     }
   }, []);
+
+  // 실시간 관전 SSE 구독 (다른 플레이어가 진행 중일 때만 연결)
+  useEffect(() => {
+    if (sandboxMode || !lockedByOther || isMyTurn) {
+      spectateFrameRef.current = null;
+      lastSpectateEffectSeqRef.current = 0;
+      setSpectateLiveActive(false);
+      setSpectatePhase('');
+      return;
+    }
+
+    const es = new EventSource(`/api/gacha/live?machineIndex=${machineIndex}`);
+    es.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg?.type === 'clear') {
+          spectateFrameRef.current = null;
+          setSpectateLiveActive(false);
+          setSpectatePhase('');
+          return;
+        }
+        if (msg?.type === 'frame' && msg.frame) {
+          const frame = msg.frame as GachaLiveFrame;
+          spectateFrameRef.current = frame;
+          setSpectateLiveActive(true);
+          setSpectatePhase(frame.phase || '');
+          if (frame.effect && typeof frame.effectSeq === 'number' && frame.effectSeq !== lastSpectateEffectSeqRef.current) {
+            lastSpectateEffectSeqRef.current = frame.effectSeq;
+            if (frame.effect === 'start') triggerStartPopup(false);
+            else if (frame.effect === 'balance_catch') triggerBalanceCatch();
+            else if (frame.effect === 'extreme_drr') triggerExtremeDrr();
+            else if (frame.effect === 'near_near') triggerNearNear();
+            else if (frame.effect === 'finish_win') triggerFinishWin();
+          }
+        }
+      } catch {}
+    };
+    es.onerror = () => {};
+
+    return () => {
+      es.close();
+      spectateFrameRef.current = null;
+      setSpectateLiveActive(false);
+      setSpectatePhase('');
+    };
+  }, [
+    sandboxMode,
+    lockedByOther,
+    isMyTurn,
+    machineIndex,
+    triggerStartPopup,
+    triggerBalanceCatch,
+    triggerExtremeDrr,
+    triggerNearNear,
+    triggerFinishWin,
+  ]);
 
   const simControlRef = useRef<{
     syncFromItems: (nextItems: GachaBoxItem[]) => void;
@@ -1212,17 +1340,19 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
               if (plushItem) {
                 const plushMat = createPlushMaterial(spec.imgSrc);
-                const initGeo = cachedSandroneGeoData
-                  ? buildBufferGeometryFromPlushData(cachedSandroneGeoData)
+                const geoSrc = spec.plushGeoSrc || '/assets/sandrone_plush_geo.json';
+                const cachedGeo = cachedPlushGeoMap.get(geoSrc);
+                const initGeo = cachedGeo
+                  ? buildBufferGeometryFromPlushData(cachedGeo)
                   : new THREE.BoxGeometry(dims.w * 0.7, dims.h, dims.d * 0.85);
                 mesh = new THREE.Mesh(initGeo, plushMat);
                 mesh.castShadow = true;
                 mesh.receiveShadow = true;
                 scene.add(mesh);
 
-                if (!cachedSandroneGeoData) {
+                if (!cachedGeo) {
                   const targetId = it.id;
-                  loadSandronePlushGeoData().then((geoData) => {
+                  loadPlushGeoData(geoSrc).then((geoData) => {
                     if (!geoData || disposed) return;
                     const liveEnt = prizeEntities.get(targetId);
                     if (!liveEnt) return;
@@ -1232,12 +1362,15 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                   });
                 }
 
-                const parts = [
-                  { pos: [0.05, 0, 0.02], half: [0.28, 0.21, 0.50] },
-                  { pos: [0.04, 0, -0.44], half: [0.19, 0.18, 0.20] },
-                  { pos: [-0.30, 0, 0.24], half: [0.15, 0.16, 0.30] },
-                  { pos: [0.30, 0, 0.22], half: [0.14, 0.17, 0.28] },
-                ];
+                const parts =
+                  spec.plushParts && spec.plushParts.length > 0
+                    ? spec.plushParts
+                    : [
+                        { pos: [0.05, 0, 0.02] as [number, number, number], half: [0.28, 0.21, 0.50] as [number, number, number], w: 0.45 },
+                        { pos: [0.04, 0, -0.44] as [number, number, number], half: [0.19, 0.18, 0.20] as [number, number, number], w: 0.20 },
+                        { pos: [-0.30, 0, 0.24] as [number, number, number], half: [0.15, 0.16, 0.30] as [number, number, number], w: 0.18 },
+                        { pos: [0.30, 0, 0.22] as [number, number, number], half: [0.14, 0.17, 0.28] as [number, number, number], w: 0.17 },
+                      ];
                 const comp = new Jolt.StaticCompoundShapeSettings();
                 for (const p of parts) {
                   comp.AddShape(
@@ -1471,6 +1604,13 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           });
 
           setCranePhase('idle');
+          if (!sandboxModeRef.current) {
+            fetch('/api/gacha/live', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ clear: true, machineIndex: machineIndexRef.current }),
+            }).catch(() => {});
+          }
           onTurnFinishRef.current({
             wonItemIds,
             updatedItems,
@@ -1512,6 +1652,8 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
         // 8. Main Animation + Jolt 120Hz Physics Loop
         let lastTime = performance.now();
+        const tmpSpecPos = new THREE.Vector3();
+        const tmpSpecQuat = new THREE.Quaternion();
 
         const animate = (now: number) => {
           if (disposed) return;
@@ -1519,6 +1661,81 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           const rawDt = Math.min((now - lastTime) / 1000, 0.04);
           lastTime = now;
           const dt = rawDt * Math.max(0.25, Math.min(1.5, tuningRef.current.timeScale));
+
+          // 실시간 관전 모드: 다른 플레이어로부터 수신한 라이브 좌표를 부드럽게 보간 렌더링
+          if (!sandboxModeRef.current && Boolean(lockedByOtherRef.current) && !isMyTurnRef.current && spectateFrameRef.current) {
+            const sf = spectateFrameRef.current;
+            const sAlpha = Math.min(1, rawDt * 18);
+
+            tmpSpecPos.set(sf.headPos[0], sf.headPos[1], sf.headPos[2]);
+            tmpSpecQuat.set(sf.headQuat[0], sf.headQuat[1], sf.headQuat[2], sf.headQuat[3]);
+            ufoHeadGroup.position.lerp(tmpSpecPos, sAlpha);
+            ufoHeadGroup.quaternion.slerp(tmpSpecQuat, sAlpha);
+
+            tmpSpecPos.set(sf.leftArmPos[0], sf.leftArmPos[1], sf.leftArmPos[2]);
+            tmpSpecQuat.set(sf.leftArmQuat[0], sf.leftArmQuat[1], sf.leftArmQuat[2], sf.leftArmQuat[3]);
+            leftArmVisual.position.lerp(tmpSpecPos, sAlpha);
+            leftArmVisual.quaternion.slerp(tmpSpecQuat, sAlpha);
+
+            tmpSpecPos.set(sf.rightArmPos[0], sf.rightArmPos[1], sf.rightArmPos[2]);
+            tmpSpecQuat.set(sf.rightArmQuat[0], sf.rightArmQuat[1], sf.rightArmQuat[2], sf.rightArmQuat[3]);
+            rightArmVisual.position.lerp(tmpSpecPos, sAlpha);
+            rightArmVisual.quaternion.slerp(tmpSpecQuat, sAlpha);
+
+            gantryBeam.position.z = THREE.MathUtils.lerp(gantryBeam.position.z, sf.gantryZ, sAlpha);
+            trolleyMesh.position.set(
+              THREE.MathUtils.lerp(trolleyMesh.position.x, sf.gantryX, sAlpha),
+              3.82,
+              gantryBeam.position.z
+            );
+
+            tmpThreePosA.set(trolleyMesh.position.x, 3.79, trolleyMesh.position.z);
+            tmpThreePosB.set(ufoHeadGroup.position.x, ufoHeadGroup.position.y + 0.22, ufoHeadGroup.position.z);
+            tmpThreeDir.subVectors(tmpThreePosB, tmpThreePosA);
+            const cableLenSpec = Math.max(0.08, tmpThreeDir.length());
+            cableMesh.scale.set(1, cableLenSpec, 1);
+            cableMesh.position.lerpVectors(tmpThreePosA, tmpThreePosB, 0.5);
+            tmpThreeDir.normalize();
+            tmpThreeQuat.setFromUnitVectors(tmpThreeUp, tmpThreeDir);
+            cableMesh.quaternion.copy(tmpThreeQuat);
+
+            const specShowAim =
+              sf.phase === 'ready_right' ||
+              sf.phase === 'moving_right' ||
+              sf.phase === 'ready_up' ||
+              sf.phase === 'moving_up';
+            aimRing.visible = specShowAim;
+            aimBeam.visible = specShowAim;
+            if (specShowAim) {
+              aimRing.position.set(ufoHeadGroup.position.x, GACHA_PHYSICS.BAR_Y + 0.12, ufoHeadGroup.position.z);
+              const beamH = Math.max(0.2, ufoHeadGroup.position.y - (GACHA_PHYSICS.BAR_Y + 0.12));
+              aimBeam.scale.y = beamH / 1.7;
+              aimBeam.position.set(ufoHeadGroup.position.x, GACHA_PHYSICS.BAR_Y + 0.12 + beamH / 2, ufoHeadGroup.position.z);
+            }
+
+            for (const it of sf.items) {
+              const ent = prizeEntities.get(it.id);
+              if (ent) {
+                tmpSpecPos.set(it.position[0], it.position[1], it.position[2]);
+                tmpSpecQuat.set(it.quaternion[0], it.quaternion[1], it.quaternion[2], it.quaternion[3]);
+                ent.mesh.position.lerp(tmpSpecPos, sAlpha);
+                ent.mesh.quaternion.slerp(tmpSpecQuat, sAlpha);
+              }
+            }
+
+            const desiredPose = getCameraPose(
+              cameraViewRef.current,
+              viewportW,
+              viewportH,
+              frontTiptoeDegRef.current
+            );
+            const lerpAlpha = Math.min(1, rawDt * 8.5);
+            camera.position.lerp(desiredPose.pos, lerpAlpha);
+            currentLookAt.lerp(desiredPose.look, lerpAlpha);
+            camera.lookAt(currentLookAt);
+            renderer!.render(scene, camera);
+            return;
+          }
 
           const curPhase = phaseRef.current;
 
@@ -1783,6 +2000,61 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           camera.position.lerp(desiredPose.pos, lerpAlpha);
           currentLookAt.lerp(desiredPose.look, lerpAlpha);
           camera.lookAt(currentLookAt);
+
+          // 실시간 관전 브로드캐스트 (~13fps, 비동기 non-blocking)
+          if (
+            !sandboxModeRef.current &&
+            isMyTurnRef.current &&
+            curPhase !== 'idle' &&
+            !livePostInFlightRef.current &&
+            now - lastLivePostTimeRef.current >= 75
+          ) {
+            lastLivePostTimeRef.current = now;
+            livePostInFlightRef.current = true;
+            const liveItems = Array.from(prizeEntities.values()).map((ent) => {
+              const ep = ent.body.GetPosition();
+              const eq = ent.body.GetRotation();
+              return {
+                id: ent.data.id,
+                position: [
+                  Number(ep.GetX().toFixed(3)),
+                  Number(ep.GetY().toFixed(3)),
+                  Number(ep.GetZ().toFixed(3)),
+                ],
+                quaternion: [
+                  Number(eq.GetX().toFixed(4)),
+                  Number(eq.GetY().toFixed(4)),
+                  Number(eq.GetZ().toFixed(4)),
+                  Number(eq.GetW().toFixed(4)),
+                ],
+              };
+            });
+            fetch('/api/gacha/live', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                machineIndex: machineIndexRef.current,
+                turnKey: turnKeyRef.current || '',
+                member: selectedMemberRef.current,
+                phase: curPhase,
+                gantryX: Number(sim.gantryX.toFixed(3)),
+                gantryZ: Number(sim.gantryZ.toFixed(3)),
+                headPos: [Number(hp.GetX().toFixed(3)), Number(hp.GetY().toFixed(3)), Number(hp.GetZ().toFixed(3))],
+                headQuat: [Number(hq.GetX().toFixed(4)), Number(hq.GetY().toFixed(4)), Number(hq.GetZ().toFixed(4)), Number(hq.GetW().toFixed(4))],
+                leftArmPos: [Number(lp.GetX().toFixed(3)), Number(lp.GetY().toFixed(3)), Number(lp.GetZ().toFixed(3))],
+                leftArmQuat: [Number(lq.GetX().toFixed(4)), Number(lq.GetY().toFixed(4)), Number(lq.GetZ().toFixed(4)), Number(lq.GetW().toFixed(4))],
+                rightArmPos: [Number(rp.GetX().toFixed(3)), Number(rp.GetY().toFixed(3)), Number(rp.GetZ().toFixed(3))],
+                rightArmQuat: [Number(rq.GetX().toFixed(4)), Number(rq.GetY().toFixed(4)), Number(rq.GetZ().toFixed(4)), Number(rq.GetW().toFixed(4))],
+                items: liveItems,
+                effect: liveEffectRef.current.effect,
+                effectSeq: liveEffectRef.current.seq,
+              }),
+            })
+              .catch(() => {})
+              .finally(() => {
+                livePostInFlightRef.current = false;
+              });
+          }
 
           renderer!.render(scene, camera);
         };
@@ -2210,23 +2482,26 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           </div>
         )}
 
-        {/* 다른 멤버가 뽑기 진행 중일 때 동시 진행 방지 오버레이 */}
+        {/* 다른 멤버가 뽑기 진행 중일 때 실시간 관전 + 동시 진행 방지 오버레이 */}
         {lockedByOther && !isMyTurn && (
-          <div className="absolute inset-0 z-10 bg-slate-950/45 backdrop-blur-[1.5px] flex items-center justify-center p-4 pointer-events-auto">
-            <div className="px-5 py-3.5 rounded-2xl bg-slate-900/95 border border-rose-500/60 shadow-2xl text-center space-y-1 max-w-xs">
-              <div className="inline-flex items-center gap-1.5 text-rose-300 text-xs font-black">
-                <span className="w-2 h-2 rounded-full bg-rose-400 animate-ping" />
-                <span>
+          <div className="absolute inset-0 z-10 bg-slate-950/25 backdrop-blur-[0.6px] pointer-events-none flex items-start justify-center pt-11 sm:pt-12 px-3">
+            <div className="px-4 py-2 rounded-2xl bg-slate-900/85 border border-rose-500/60 shadow-2xl text-center backdrop-blur-sm max-w-sm">
+              <div className="inline-flex items-center gap-1.5 text-rose-300 text-[11px] font-black flex-wrap justify-center">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-400/40 text-rose-200 text-[10px]">
+                  {spectateLiveActive ? 'LIVE 실시간 관전' : '관전 대기 중'}
+                </span>
+                <span className="text-white">
+                  🔒 <span className="text-amber-300">{lockedByOther}</span>님 진행 중
                   {otherSessionProgress && otherSessionProgress.total > 1
-                    ? `연속 뽑기 진행 중 (${otherSessionProgress.current}/${otherSessionProgress.total}회)`
-                    : '현재 뽑기 진행 중'}
+                    ? ` (${otherSessionProgress.current}/${otherSessionProgress.total}회)`
+                    : ''}
                 </span>
               </div>
-              <p className="text-sm font-black text-white">
-                🔒 <span className="text-amber-300">{lockedByOther}</span>님이 뽑기를 진행 중입니다
-              </p>
-              <p className="text-[11px] text-slate-400">
-                완료 후 상자 위치가 반영되면 바로 참여할 수 있습니다.
+              <p className="text-[10px] text-slate-300 mt-0.5">
+                {spectateLiveActive && spectatePhase && LIVE_PHASE_LABELS[spectatePhase]
+                  ? `현재 동작: ${LIVE_PHASE_LABELS[spectatePhase]} · 카메라 시점 전환 가능`
+                  : '실시간 조작 화면을 관전할 수 있으며, 종료 후 바로 참여 가능합니다.'}
               </p>
             </div>
           </div>
