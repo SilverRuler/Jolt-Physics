@@ -1968,7 +1968,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           for (const ent of prizeEntities.values()) {
             if (isPlushMachine) {
               const p = ent.body.GetPosition();
-              if (Math.hypot(p.GetX() - sim.gantryX, p.GetZ() - sim.gantryZ) <= 0.95) {
+              if (Math.hypot(p.GetX() - sim.gantryX, p.GetZ() - sim.gantryZ) <= 1.35) {
                 bi.ActivateBody(ent.body.GetID());
               }
             } else {
