@@ -1185,10 +1185,10 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         joltSettings.mObjectVsBroadPhaseLayerFilter = objVsBp;
 
         const jolt = new Jolt.JoltInterface(joltSettings);
+        Jolt.destroy(joltSettings);
         cleanupJolt = () => {
           try {
             Jolt.destroy(jolt);
-            Jolt.destroy(joltSettings);
           } catch {}
         };
         const ps = jolt.GetPhysicsSystem();
@@ -1821,13 +1821,34 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         };
 
         simControlRef.current = {
-          syncFromItems: (nextItems) => syncFromItems(nextItems, false),
-          resetClawToHome,
-          prepareTurnStart,
-          startDescending,
-          applyLiveTuning,
-          rebuildPrizesForTuning,
-          updateRedBarSpacing,
+          syncFromItems: (nextItems) => {
+            if (disposed) return;
+            syncFromItems(nextItems, false);
+          },
+          resetClawToHome: () => {
+            if (disposed) return;
+            resetClawToHome();
+          },
+          prepareTurnStart: (nextItems) => {
+            if (disposed) return;
+            prepareTurnStart(nextItems);
+          },
+          startDescending: () => {
+            if (disposed) return;
+            startDescending();
+          },
+          applyLiveTuning: (t) => {
+            if (disposed) return;
+            applyLiveTuning(t);
+          },
+          rebuildPrizesForTuning: () => {
+            if (disposed) return;
+            rebuildPrizesForTuning();
+          },
+          updateRedBarSpacing: (halfZ) => {
+            if (disposed) return;
+            updateRedBarSpacing(halfZ);
+          },
         };
 
         syncFromItems(itemsRef.current);
@@ -2337,6 +2358,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
     return () => {
       disposed = true;
+      simControlRef.current = null;
       cancelAnimationFrame(animId);
       if (handleResize) window.removeEventListener('resize', handleResize);
       try {
