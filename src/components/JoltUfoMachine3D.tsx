@@ -24,8 +24,24 @@ import {
   X,
 } from 'lucide-react';
 import { GachaBoxItem } from '@/types/gacha';
-import { GACHA_PHYSICS, getBoxDimensions, getBoxRewardAmount, getSandboxRedBarHalfZ, isBoxAtInitialPose, isPlushSlot } from '@/constants/gacha';
-import { DEFAULT_PHYSICS_TUNING, PhysicsTuning, PRIZE_SPECS, PrizeSpec } from '@/constants/prizes';
+import {
+  GACHA_PHYSICS,
+  getBoxDimensions,
+  getBoxRewardAmount,
+  isBoxAtInitialPose,
+  isPlushSlot,
+  PLUSH_CHUTE_HOME_X,
+  PLUSH_CHUTE_HOME_Z,
+  PLUSH_FLOOR_Y,
+  PLUSH_MOUND_SCALE,
+} from '@/constants/gacha';
+import {
+  DEFAULT_PHYSICS_TUNING,
+  getMachineProfile,
+  PhysicsTuning,
+  PRIZE_SPECS,
+  PrizeSpec,
+} from '@/constants/prizes';
 import { isPrizeSpanningRedAndBlueBar } from '@/lib/gachaEffects';
 
 type CameraView = 'front' | 'top' | 'right';
@@ -39,6 +55,7 @@ export type CranePhase =
   | 'descending'
   | 'closing'
   | 'lifting'
+  | 'carrying'
   | 'releasing'
   | 'settling';
 
@@ -130,6 +147,7 @@ const LIVE_PHASE_LABELS: Record<string, string> = {
   descending: '집게 하강 중',
   closing: '상품 잡는 중',
   lifting: '들어올리는 중',
+  carrying: '배출구로 운반 중',
   releasing: '드랍 중',
   settling: '안정화 중',
 };
@@ -377,7 +395,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
   const cameraViewRef = useRef<CameraView>('front');
   const frontTiptoeDegRef = useRef(0);
   const tuningRef = useRef<PhysicsTuning>(tuning);
-  const targetRedBarHalfZ = getSandboxRedBarHalfZ(machineIndex);
+  const targetRedBarHalfZ = getMachineProfile(machineIndex).redBarHalfZ;
   const redBarHalfZRef = useRef<number>(targetRedBarHalfZ);
   const itemsRef = useRef<GachaBoxItem[]>(items);
   const onTurnFinishRef = useRef(onTurnFinish);
@@ -685,6 +703,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
     let animId = 0;
     let renderer: THREE.WebGLRenderer | null = null;
     let handleResize: (() => void) | null = null;
+    let cleanupJolt: (() => void) | null = null;
 
     getJoltModule()
       .then((Jolt) => {
@@ -915,13 +934,30 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           roughness: 0.55,
         });
 
-        const initRedHalfZ = redBarHalfZRef.current;
-        const allBarSpecs = [
-          { y: GACHA_PHYSICS.BAR_Y, z: -initRedHalfZ, isOuter: false, sign: -1 as const },
-          { y: GACHA_PHYSICS.BAR_Y, z: initRedHalfZ, isOuter: false, sign: 1 as const },
-          { y: GACHA_PHYSICS.OUTER_BAR_Y, z: -GACHA_PHYSICS.OUTER_BAR_HALF_Z, isOuter: true, sign: -1 as const },
-          { y: GACHA_PHYSICS.OUTER_BAR_Y, z: GACHA_PHYSICS.OUTER_BAR_HALF_Z, isOuter: true, sign: 1 as const },
-        ];
+        const activeProfile = getMachineProfile(machineIndex);
+        const isPlushMachine = isPlushSlot(machineIndex);
+        const headScale = activeProfile.headScale;
+        const armPivotX = 0.22 * headScale;
+        const scaledArmSegments = ARM_SEGMENTS.map((seg) => ({
+          ...seg,
+          pos: [seg.pos[0] * activeProfile.armSizeScale, seg.pos[1] * activeProfile.armLengthScale, seg.pos[2]] as const,
+          half: [seg.half[0] * activeProfile.armSizeScale, seg.half[1] * activeProfile.armLengthScale, seg.half[2] * activeProfile.armSizeScale] as const,
+        }));
+        const effectiveDropY = isPlushMachine
+          ? Number((1.36 + (activeProfile.armLengthScale - 1.0) * 0.86).toFixed(3))
+          : Number((GACHA_PHYSICS.CLAW_DROP_Y + (activeProfile.armLengthScale - 1.0) * 0.86).toFixed(3));
+
+        const initRedHalfZ = activeProfile.redBarHalfZ;
+        const initOuterHalfZ = activeProfile.outerBarHalfZ;
+        const initOuterBarY = activeProfile.outerBarY;
+        const allBarSpecs = isPlushMachine
+          ? []
+          : [
+              { y: GACHA_PHYSICS.BAR_Y, z: -initRedHalfZ, isOuter: false, sign: -1 as const },
+              { y: GACHA_PHYSICS.BAR_Y, z: initRedHalfZ, isOuter: false, sign: 1 as const },
+              { y: initOuterBarY, z: -initOuterHalfZ, isOuter: true, sign: -1 as const },
+              { y: initOuterBarY, z: initOuterHalfZ, isOuter: true, sign: 1 as const },
+            ];
         const ringXPositions = [-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5];
         const redBarMeshes: Array<{ mesh: THREE.Mesh; sign: -1 | 1 }> = [];
         const redRingMeshes: Array<{ mesh: THREE.Mesh; sign: -1 | 1 }> = [];
@@ -942,8 +978,83 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           }
         });
 
+        // 3D 인형뽑기 전용: 클래식 산더미 바닥판 + 좌전방 배출구 구멍(WIN) + 아크릴 칸막이
+        const plushFloorSlabs = isPlushMachine
+          ? [
+              { cx: 0.61, cy: PLUSH_FLOOR_Y - 0.06, cz: 0, w: 2.34, h: 0.12, d: 3.76 },
+              { cx: -1.17, cy: PLUSH_FLOOR_Y - 0.06, cz: -0.74, w: 1.22, h: 0.12, d: 2.28 },
+            ]
+          : [];
+        const plushChuteGuards = isPlushMachine
+          ? [
+              { cx: -0.56, cy: PLUSH_FLOOR_Y + 0.18, cz: 1.14, w: 0.06, h: 0.36, d: 1.48 },
+              { cx: -1.17, cy: PLUSH_FLOOR_Y + 0.18, cz: 0.40, w: 1.22, h: 0.36, d: 0.06 },
+            ]
+          : [];
+        if (isPlushMachine) {
+          const plushDeckMat = new THREE.MeshStandardMaterial({
+            color: '#1e293b',
+            roughness: 0.55,
+            metalness: 0.25,
+          });
+          for (const s of plushFloorSlabs) {
+            const m = new THREE.Mesh(new THREE.BoxGeometry(s.w, s.h, s.d), plushDeckMat);
+            m.position.set(s.cx, s.cy, s.cz);
+            m.receiveShadow = true;
+            cabinetGroup.add(m);
+          }
+          const guardGlassMat = new THREE.MeshPhysicalMaterial({
+            color: '#67e8f9',
+            transparent: true,
+            opacity: 0.32,
+            roughness: 0.12,
+            metalness: 0.1,
+          });
+          const guardRimMat = new THREE.MeshStandardMaterial({
+            color: '#22d3ee',
+            emissive: '#06b6d4',
+            emissiveIntensity: 0.8,
+          });
+          for (const g of plushChuteGuards) {
+            const gm = new THREE.Mesh(new THREE.BoxGeometry(g.w, g.h, g.d), guardGlassMat);
+            gm.position.set(g.cx, g.cy, g.cz);
+            cabinetGroup.add(gm);
+            const rim = new THREE.Mesh(new THREE.BoxGeometry(g.w + 0.015, 0.03, g.d + 0.015), guardRimMat);
+            rim.position.set(g.cx, PLUSH_FLOOR_Y + 0.365, g.cz);
+            cabinetGroup.add(rim);
+          }
+          const chuteSignCanvas = document.createElement('canvas');
+          chuteSignCanvas.width = 256;
+          chuteSignCanvas.height = 128;
+          const sctx = chuteSignCanvas.getContext('2d');
+          if (sctx) {
+            sctx.fillStyle = '#083344';
+            sctx.fillRect(0, 0, 256, 128);
+            sctx.strokeStyle = '#22d3ee';
+            sctx.lineWidth = 8;
+            sctx.strokeRect(6, 6, 244, 116);
+            sctx.fillStyle = '#fef08a';
+            sctx.font = 'bold 36px sans-serif';
+            sctx.textAlign = 'center';
+            sctx.fillText('🎁 WIN', 128, 58);
+            sctx.fillStyle = '#a5f3fc';
+            sctx.font = 'bold 26px sans-serif';
+            sctx.fillText('배출구 (DROP)', 128, 98);
+          }
+          const chuteSignTex = new THREE.CanvasTexture(chuteSignCanvas);
+          chuteSignTex.colorSpace = THREE.SRGBColorSpace;
+          const chuteSign = new THREE.Mesh(
+            new THREE.PlaneGeometry(1.06, 0.54),
+            new THREE.MeshBasicMaterial({ map: chuteSignTex })
+          );
+          chuteSign.rotation.x = -Math.PI / 2;
+          chuteSign.position.set(PLUSH_CHUTE_HOME_X, -1.42, PLUSH_CHUTE_HOME_Z);
+          cabinetGroup.add(chuteSign);
+        }
+
         // UFO Head & Hinged Claw Arms Visuals
         const ufoHeadGroup = new THREE.Group();
+        ufoHeadGroup.scale.setScalar(headScale);
         scene.add(ufoHeadGroup);
 
         const ufoTop = new THREE.Mesh(
@@ -1003,7 +1114,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           pin.rotation.x = Math.PI / 2;
           group.add(pin);
 
-          for (const seg of ARM_SEGMENTS) {
+          for (const seg of scaledArmSegments) {
             const geo = new THREE.BoxGeometry(seg.half[0] * 2, seg.half[1] * 2, seg.half[2] * 2);
             const mesh = new THREE.Mesh(geo, seg.isTip ? armTipMat : armMetalMat);
             mesh.position.set(side * seg.pos[0], seg.pos[1], seg.pos[2]);
@@ -1074,6 +1185,12 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         joltSettings.mObjectVsBroadPhaseLayerFilter = objVsBp;
 
         const jolt = new Jolt.JoltInterface(joltSettings);
+        cleanupJolt = () => {
+          try {
+            Jolt.destroy(jolt);
+            Jolt.destroy(joltSettings);
+          } catch {}
+        };
         const ps = jolt.GetPhysicsSystem();
         ps.SetGravity(new Jolt.Vec3(0, -9.81, 0));
         const bi = ps.GetBodyInterface();
@@ -1117,6 +1234,33 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             }
           }
         });
+
+        if (isPlushMachine) {
+          for (const s of plushFloorSlabs) {
+            const slabBCS = new Jolt.BodyCreationSettings(
+              new Jolt.BoxShape(new Jolt.Vec3(s.w / 2, s.h / 2, s.d / 2), 0.015),
+              new Jolt.RVec3(s.cx, s.cy, s.cz),
+              Jolt.Quat.prototype.sIdentity(),
+              Jolt.EMotionType_Static,
+              LAYER_BAR
+            );
+            slabBCS.mFriction = 0.55;
+            slabBCS.mRestitution = 0.0;
+            bi.AddBody(bi.CreateBody(slabBCS).GetID(), Jolt.EActivation_DontActivate);
+          }
+          for (const g of plushChuteGuards) {
+            const guardBCS = new Jolt.BodyCreationSettings(
+              new Jolt.BoxShape(new Jolt.Vec3(g.w / 2, g.h / 2, g.d / 2), 0.01),
+              new Jolt.RVec3(g.cx, g.cy, g.cz),
+              Jolt.Quat.prototype.sIdentity(),
+              Jolt.EMotionType_Static,
+              LAYER_ENV
+            );
+            guardBCS.mFriction = 0.22;
+            guardBCS.mRestitution = 0.0;
+            bi.AddBody(bi.CreateBody(guardBCS).GetID(), Jolt.EActivation_DontActivate);
+          }
+        }
 
         [-GACHA_PHYSICS.CABINET_HALF_X - 0.1, GACHA_PHYSICS.CABINET_HALF_X + 0.1].forEach((wx) => {
           const wallBCS = new Jolt.BodyCreationSettings(
@@ -1165,9 +1309,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         bi.AddBody(bi.CreateBody(floorBCS).GetID(), Jolt.EActivation_DontActivate);
 
         // 5. Real Articulated UFO Crane Rig (Gantry ↔ SixDOF ↔ Head ↔ 2× Hinge ↔ 2× Claw Arm)
-        const homeX = GACHA_PHYSICS.CLAW_HOME_X;
+        const homeX = isPlushMachine ? PLUSH_CHUTE_HOME_X : GACHA_PHYSICS.CLAW_HOME_X;
         const homeY = GACHA_PHYSICS.CLAW_HOME_Y;
-        const homeZ = GACHA_PHYSICS.CLAW_HOME_Z;
+        const homeZ = isPlushMachine ? PLUSH_CHUTE_HOME_Z : GACHA_PHYSICS.CLAW_HOME_Z;
 
         const gantryBody = bi.CreateBody(
           new Jolt.BodyCreationSettings(
@@ -1181,7 +1325,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         bi.AddBody(gantryBody.GetID(), Jolt.EActivation_Activate);
 
         const headBCS = new Jolt.BodyCreationSettings(
-          new Jolt.CylinderShape(0.125, 0.36, 0.02),
+          new Jolt.CylinderShape(0.125 * headScale, 0.36 * headScale, 0.02),
           new Jolt.RVec3(homeX, homeY, homeZ),
           Jolt.Quat.prototype.sIdentity(),
           Jolt.EMotionType_Dynamic,
@@ -1246,7 +1390,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
         const createClawArm = (side: -1 | 1) => {
           const comp = new Jolt.StaticCompoundShapeSettings();
-          for (const seg of ARM_SEGMENTS) {
+          for (const seg of scaledArmSegments) {
             comp.AddShape(
               new Jolt.Vec3(side * seg.pos[0], seg.pos[1], seg.pos[2]),
               Jolt.Quat.prototype.sRotation(new Jolt.Vec3(0, 0, 1), side * seg.rotZ),
@@ -1255,7 +1399,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             );
           }
           const shapeRes = comp.Create();
-          const pivotX = homeX + side * 0.22;
+          const pivotX = homeX + side * armPivotX;
           const pivotY = homeY - 0.02;
           const abcs = new Jolt.BodyCreationSettings(
             shapeRes.Get(),
@@ -1365,6 +1509,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                   ? buildBufferGeometryFromPlushData(cachedGeo)
                   : new THREE.BoxGeometry(dims.w * 0.7, dims.h, dims.d * 0.85);
                 mesh = new THREE.Mesh(initGeo, plushMat);
+                mesh.scale.setScalar(PLUSH_MOUND_SCALE);
                 mesh.castShadow = true;
                 mesh.receiveShadow = true;
                 scene.add(mesh);
@@ -1378,6 +1523,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                     const nextGeo = buildBufferGeometryFromPlushData(geoData);
                     liveEnt.mesh.geometry.dispose();
                     liveEnt.mesh.geometry = nextGeo;
+                    liveEnt.mesh.scale.setScalar(PLUSH_MOUND_SCALE);
                   });
                 }
 
@@ -1392,22 +1538,32 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                       ];
                 const comp = new Jolt.StaticCompoundShapeSettings();
                 for (const p of parts) {
+                  const px = p.pos[0] * PLUSH_MOUND_SCALE;
+                  const py = p.pos[1] * PLUSH_MOUND_SCALE;
+                  const pz = p.pos[2] * PLUSH_MOUND_SCALE;
+                  const hx = p.half[0] * PLUSH_MOUND_SCALE;
+                  const hy = p.half[1] * PLUSH_MOUND_SCALE;
+                  const hz = p.half[2] * PLUSH_MOUND_SCALE;
                   comp.AddShape(
-                    new Jolt.Vec3(p.pos[0], p.pos[1], p.pos[2]),
+                    new Jolt.Vec3(px, py, pz),
                     tmpIdQuat,
-                    new Jolt.BoxShapeSettings(new Jolt.Vec3(p.half[0], p.half[1], p.half[2]), 0.02),
+                    new Jolt.BoxShapeSettings(new Jolt.Vec3(hx, hy, hz), 0.015),
                     0
                   );
                   const wf = new THREE.Mesh(
-                    new THREE.BoxGeometry(p.half[0] * 2, p.half[1] * 2, p.half[2] * 2),
+                    new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2),
                     debugWireMat
                   );
-                  wf.position.set(p.pos[0], p.pos[1], p.pos[2]);
+                  wf.position.set(px, py, pz);
                   debugGroup.add(wf);
                 }
                 if (liveTuning.useComOffset) {
                   const comWrap = new Jolt.OffsetCenterOfMassShapeSettings(
-                    new Jolt.Vec3(spec.comOffset[0], spec.comOffset[1], spec.comOffset[2]),
+                    new Jolt.Vec3(
+                      spec.comOffset[0] * PLUSH_MOUND_SCALE,
+                      spec.comOffset[1] * PLUSH_MOUND_SCALE,
+                      spec.comOffset[2] * PLUSH_MOUND_SCALE
+                    ),
                     comp
                   );
                   shapeRef = comWrap.Create().Get();
@@ -1446,7 +1602,10 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                 LAYER_PRIZE
               );
               bcs.mOverrideMassProperties = Jolt.EOverrideMassProperties_CalculateInertia;
-              bcs.mMassPropertiesOverride.mMass = Math.max(0.4, spec.mass * liveTuning.massScale);
+              bcs.mMassPropertiesOverride.mMass = Math.max(
+                0.35,
+                (plushItem ? spec.mass * 0.72 : spec.mass) * liveTuning.massScale
+              );
               bcs.mFriction = spec.friction;
               bcs.mRestitution = 0.0;
               bcs.mLinearDamping = 0.18;
@@ -1489,6 +1648,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           lastHeadYForStall: homeY,
           descendStallTimer: 0,
           liftTopHoldTimer: 0,
+          carryStopHoldTimer: 0,
           releaseClearTimer: 0,
         };
 
@@ -1517,6 +1677,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           sim.nearNearTriggeredThisTurn = false;
           sim.descendStallTimer = 0;
           sim.liftTopHoldTimer = 0;
+          sim.carryStopHoldTimer = 0;
           sim.releaseClearTimer = 0;
 
           tmpRVec.Set(homeX, homeY, homeZ);
@@ -1524,11 +1685,11 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           bi.SetPositionAndRotation(headBody.GetID(), tmpRVec, tmpIdQuat, Jolt.EActivation_Activate);
           bi.SetLinearAndAngularVelocity(headBody.GetID(), tmpZeroVec, tmpZeroVec);
 
-          tmpRVec.Set(homeX - 0.22, homeY - 0.02, homeZ);
+          tmpRVec.Set(homeX - armPivotX, homeY - 0.02, homeZ);
           bi.SetPositionAndRotation(leftArm.body.GetID(), tmpRVec, tmpIdQuat, Jolt.EActivation_Activate);
           bi.SetLinearAndAngularVelocity(leftArm.body.GetID(), tmpZeroVec, tmpZeroVec);
 
-          tmpRVec.Set(homeX + 0.22, homeY - 0.02, homeZ);
+          tmpRVec.Set(homeX + armPivotX, homeY - 0.02, homeZ);
           bi.SetPositionAndRotation(rightArm.body.GetID(), tmpRVec, tmpIdQuat, Jolt.EActivation_Activate);
           bi.SetLinearAndAngularVelocity(rightArm.body.GetID(), tmpZeroVec, tmpZeroVec);
 
@@ -1776,7 +1937,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           } else if (curPhase === 'descending') {
             sim.phaseTimer += dt;
             sim.targetHeadY = Math.max(
-              GACHA_PHYSICS.CLAW_DROP_Y,
+              effectiveDropY,
               sim.targetHeadY - 0.64 * dt
             );
 
@@ -1788,7 +1949,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
               sim.lastHeadYForStall = actualHeadY;
             }
 
-            if (sim.targetHeadY <= GACHA_PHYSICS.CLAW_DROP_Y || sim.descendStallTimer >= 0.45) {
+            if (sim.targetHeadY <= effectiveDropY || sim.descendStallTimer >= 0.45) {
               sim.phaseTimer = 0;
               setArmTorques(tuningRef.current.closeTorque);
               setCranePhase('closing');
@@ -1864,8 +2025,47 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             if (reachedTop) sim.liftTopHoldTimer += dt;
             else sim.liftTopHoldTimer = 0;
 
-            // 최고점 도달 후 상승 관성이 잠잠해질 때까지(0.22s) 잠깐 정지한 뒤 집게 벌림 시작
+            // 최고점 도달 후 상승 관성이 잠잠해질 때까지(0.22s) 잠깐 정지한 뒤:
+            // - 3D 인형 산더미 모드: 집게를 문 상태 그대로 배출구(초기 위치)까지 운반(carrying)
+            // - 하시와타시 박스 모드: 제자리에서 집게 벌림(releasing)
             if ((reachedTop && sim.liftTopHoldTimer >= 0.22) || sim.phaseTimer >= 3.8) {
+              sim.phaseTimer = 0;
+              if (isPlushMachine) {
+                sim.carryStopHoldTimer = 0;
+                setArmTorques(tuningRef.current.liftTorque);
+                setArmTargets(CLAW_CLOSE_TARGET);
+                setCranePhase('carrying');
+                playTone(493.88, 0.1);
+              } else {
+                sim.releaseClearTimer = 0;
+                setArmTorques(Math.max(12, tuningRef.current.liftTorque * 2.2));
+                setCranePhase('releasing');
+                playTone(392, 0.1);
+              }
+            }
+          } else if (curPhase === 'carrying') {
+            // 3D 인형뽑기 전용: 집게가 물고 있는 상태를 유지하며 배출구(초기 위치)까지 부드럽게 운반
+            sim.phaseTimer += dt;
+            sim.targetHeadY = GACHA_PHYSICS.CLAW_LIFT_Y;
+            setArmTorques(tuningRef.current.liftTorque);
+            setArmTargets(CLAW_CLOSE_TARGET);
+
+            const dx = homeX - sim.gantryX;
+            const dz = homeZ - sim.gantryZ;
+            const dist = Math.hypot(dx, dz);
+            const carrySpeed = 1.15;
+            if (dist > 0.025) {
+              const step = Math.min(dist, carrySpeed * dt);
+              sim.gantryX += (dx / dist) * step;
+              sim.gantryZ += (dz / dist) * step;
+              sim.carryStopHoldTimer = 0;
+            } else {
+              sim.gantryX = homeX;
+              sim.gantryZ = homeZ;
+              sim.carryStopHoldTimer += dt;
+            }
+
+            if (sim.carryStopHoldTimer >= 0.22 || sim.phaseTimer >= 4.5) {
               sim.phaseTimer = 0;
               sim.releaseClearTimer = 0;
               setArmTorques(Math.max(12, tuningRef.current.liftTorque * 2.2));
@@ -1893,7 +2093,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
               const pv = ent.body.GetLinearVelocity();
               const horizDist = Math.hypot(pp.GetX() - hpNow.GetX(), pp.GetZ() - hpNow.GetZ());
               const stillNearClaw = pp.GetY() > hpNow.GetY() - 1.25;
-              const stillFallingMidAir = pp.GetY() > 1.32 && Math.abs(pv.GetY()) > 0.2;
+              const stillFallingMidAir = pp.GetY() > (isPlushMachine ? 0.68 : 1.32) && Math.abs(pv.GetY()) > 0.2;
               if (horizDist < 1.25 && (stillNearClaw || stillFallingMidAir)) {
                 allPrizesClearedClaw = false;
                 break;
@@ -2040,10 +2240,11 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           aimRing.visible = showAim;
           aimBeam.visible = showAim;
           if (showAim) {
-            aimRing.position.set(hp.GetX(), GACHA_PHYSICS.BAR_Y + 0.12, hp.GetZ());
-            const beamH = Math.max(0.2, hp.GetY() - (GACHA_PHYSICS.BAR_Y + 0.12));
+            const aimBaseY = isPlushMachine ? PLUSH_FLOOR_Y + 0.05 : GACHA_PHYSICS.BAR_Y + 0.12;
+            aimRing.position.set(hp.GetX(), aimBaseY, hp.GetZ());
+            const beamH = Math.max(0.2, hp.GetY() - aimBaseY);
             aimBeam.scale.y = beamH / 1.7;
-            aimBeam.position.set(hp.GetX(), GACHA_PHYSICS.BAR_Y + 0.12 + beamH / 2, hp.GetZ());
+            aimBeam.position.set(hp.GetX(), aimBaseY + beamH / 2, hp.GetZ());
           }
 
           const desiredPose = getCameraPose(
@@ -2141,9 +2342,19 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
       try {
         (container as any).__joltRo?.disconnect();
       } catch {}
-      if (renderer) renderer.dispose();
+      if (renderer) {
+        renderer.dispose();
+        if (renderer.domElement.parentNode === container) {
+          container.removeChild(renderer.domElement);
+        }
+      }
+      if (cleanupJolt) {
+        cleanupJolt();
+        cleanupJolt = null;
+      }
+      setEngineReady(false);
     };
-  }, [playTone, setCranePhase, triggerExtremeDrr, triggerBalanceCatch, triggerNearNear, triggerFinishWin]);
+  }, [machineIndex, playTone, setCranePhase, triggerExtremeDrr, triggerBalanceCatch, triggerNearNear, triggerFinishWin]);
 
   const isCraneLockedToFront = isMyTurn || isFinishing || phase !== 'idle';
 
@@ -2297,11 +2508,19 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
       case 'closing':
         return '🤏 실제 관절 모터 집게로 상자를 잡는 중...';
       case 'lifting':
-        return '⬆ 물리 마찰과 토크로 상자를 들어올리고 있습니다!';
+        return isPlushSlot(machineIndex)
+          ? '⬆ 인형을 집어 들어올리는 중...'
+          : '⬆ 물리 마찰과 토크로 상자를 들어올리고 있습니다!';
+      case 'carrying':
+        return '🎁 인형을 문 채 배출구(구멍) 위로 운반하는 중...';
       case 'releasing':
       case 'settling':
         return droppedThisTurn > 0
-          ? '🎉 Bar 사이로 상자가 떨어졌습니다!! 결과 저장 중...'
+          ? isPlushSlot(machineIndex)
+            ? '🎉 배출구로 인형이 떨어졌습니다!! 결과 저장 중...'
+            : '🎉 Bar 사이로 상자가 떨어졌습니다!! 결과 저장 중...'
+          : isPlushSlot(machineIndex)
+          ? '⚖️ 인형이 자리를 잡는 중...'
           : '⚖️ 상자가 Bar 위에서 흔들리며 자리를 잡는 중...';
     }
   })();
