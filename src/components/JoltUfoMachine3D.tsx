@@ -32,6 +32,7 @@ import {
   isPlushSlot,
   PLUSH_CHUTE_HOME_X,
   PLUSH_CHUTE_HOME_Z,
+  PLUSH_CHUTE_WALL_HEIGHT,
   PLUSH_FLOOR_Y,
   PLUSH_MOUND_SCALE,
 } from '@/constants/gacha';
@@ -129,6 +130,10 @@ interface GachaLiveFrame {
   leftArmQuat: [number, number, number, number];
   rightArmPos: [number, number, number];
   rightArmQuat: [number, number, number, number];
+  backArmPos?: [number, number, number];
+  backArmQuat?: [number, number, number, number];
+  frontArmPos?: [number, number, number];
+  frontArmQuat?: [number, number, number, number];
   items: Array<{
     id: string;
     position: [number, number, number];
@@ -891,22 +896,38 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           cabinetGroup.add(sideGlass);
         });
 
-        const rampVisualGeo = new THREE.BoxGeometry(GACHA_PHYSICS.BAR_LENGTH, 0.05, 0.84);
-        const rampVisualMat = new THREE.MeshPhysicalMaterial({
-          color: '#38bdf8',
-          transparent: true,
-          opacity: 0.16,
-          roughness: 0.2,
-        });
-        const frontRampMesh = new THREE.Mesh(rampVisualGeo, rampVisualMat);
-        frontRampMesh.position.set(0, 1.24, 1.86);
-        frontRampMesh.rotation.x = -0.72;
-        cabinetGroup.add(frontRampMesh);
+        const activeProfile = getMachineProfile(machineIndex);
+        const isPlushMachine = isPlushSlot(machineIndex);
+        const headScale = activeProfile.headScale;
+        const armPivotX = 0.22 * headScale;
+        const scaledArmSegments = ARM_SEGMENTS.map((seg) => ({
+          ...seg,
+          pos: [seg.pos[0] * activeProfile.armSizeScale, seg.pos[1] * activeProfile.armLengthScale, seg.pos[2]] as const,
+          half: [seg.half[0] * activeProfile.armSizeScale, seg.half[1] * activeProfile.armLengthScale, seg.half[2] * activeProfile.armSizeScale] as const,
+        }));
+        const effectiveDropY = isPlushMachine
+          ? Number((0.88 + (activeProfile.armLengthScale - 1.0) * 0.86).toFixed(3))
+          : Number((GACHA_PHYSICS.CLAW_DROP_Y + (activeProfile.armLengthScale - 1.0) * 0.86).toFixed(3));
+        const effectiveLiftY = isPlushMachine ? 3.36 : GACHA_PHYSICS.CLAW_LIFT_Y;
 
-        const backRampMesh = new THREE.Mesh(rampVisualGeo, rampVisualMat);
-        backRampMesh.position.set(0, 1.24, -1.86);
-        backRampMesh.rotation.x = 0.72;
-        cabinetGroup.add(backRampMesh);
+        if (!isPlushMachine) {
+          const rampVisualGeo = new THREE.BoxGeometry(GACHA_PHYSICS.BAR_LENGTH, 0.05, 0.84);
+          const rampVisualMat = new THREE.MeshPhysicalMaterial({
+            color: '#38bdf8',
+            transparent: true,
+            opacity: 0.16,
+            roughness: 0.2,
+          });
+          const frontRampMesh = new THREE.Mesh(rampVisualGeo, rampVisualMat);
+          frontRampMesh.position.set(0, 1.24, 1.86);
+          frontRampMesh.rotation.x = -0.72;
+          cabinetGroup.add(frontRampMesh);
+
+          const backRampMesh = new THREE.Mesh(rampVisualGeo, rampVisualMat);
+          backRampMesh.position.set(0, 1.24, -1.86);
+          backRampMesh.rotation.x = 0.72;
+          cabinetGroup.add(backRampMesh);
+        }
 
         const barGeo = new THREE.CylinderGeometry(
           GACHA_PHYSICS.BAR_RADIUS,
@@ -934,19 +955,6 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           emissiveIntensity: 0.35,
           roughness: 0.55,
         });
-
-        const activeProfile = getMachineProfile(machineIndex);
-        const isPlushMachine = isPlushSlot(machineIndex);
-        const headScale = activeProfile.headScale;
-        const armPivotX = 0.22 * headScale;
-        const scaledArmSegments = ARM_SEGMENTS.map((seg) => ({
-          ...seg,
-          pos: [seg.pos[0] * activeProfile.armSizeScale, seg.pos[1] * activeProfile.armLengthScale, seg.pos[2]] as const,
-          half: [seg.half[0] * activeProfile.armSizeScale, seg.half[1] * activeProfile.armLengthScale, seg.half[2] * activeProfile.armSizeScale] as const,
-        }));
-        const effectiveDropY = isPlushMachine
-          ? Number((1.36 + (activeProfile.armLengthScale - 1.0) * 0.86).toFixed(3))
-          : Number((GACHA_PHYSICS.CLAW_DROP_Y + (activeProfile.armLengthScale - 1.0) * 0.86).toFixed(3));
 
         const initRedHalfZ = activeProfile.redBarHalfZ;
         const initOuterHalfZ = activeProfile.outerBarHalfZ;
@@ -988,8 +996,8 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           : [];
         const plushChuteGuards = isPlushMachine
           ? [
-              { cx: -0.56, cy: PLUSH_FLOOR_Y + 0.31, cz: 1.14, w: 0.06, h: 0.62, d: 1.48 },
-              { cx: -1.17, cy: PLUSH_FLOOR_Y + 0.31, cz: 0.40, w: 1.22, h: 0.62, d: 0.06 },
+              { cx: -0.56, cy: PLUSH_FLOOR_Y + PLUSH_CHUTE_WALL_HEIGHT / 2, cz: 1.14, w: 0.06, h: PLUSH_CHUTE_WALL_HEIGHT, d: 1.48 },
+              { cx: -1.17, cy: PLUSH_FLOOR_Y + PLUSH_CHUTE_WALL_HEIGHT / 2, cz: 0.40, w: 1.22, h: PLUSH_CHUTE_WALL_HEIGHT, d: 0.06 },
             ]
           : [];
         if (isPlushMachine) {
@@ -1021,7 +1029,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             gm.position.set(g.cx, g.cy, g.cz);
             cabinetGroup.add(gm);
             const rim = new THREE.Mesh(new THREE.BoxGeometry(g.w + 0.015, 0.03, g.d + 0.015), guardRimMat);
-            rim.position.set(g.cx, PLUSH_FLOOR_Y + 0.625, g.cz);
+            rim.position.set(g.cx, PLUSH_FLOOR_Y + PLUSH_CHUTE_WALL_HEIGHT + 0.005, g.cz);
             cabinetGroup.add(rim);
           }
           const chuteSignCanvas = document.createElement('canvas');
@@ -1109,17 +1117,29 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         });
         const debugMeshes: THREE.Object3D[] = [];
 
-        const buildArmVisual = (side: -1 | 1) => {
+        const buildArmVisual = (side: -1 | 1, axis: 'x' | 'z' = 'x') => {
           const group = new THREE.Group();
           const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.12, 12), hingePinMat);
-          pin.rotation.x = Math.PI / 2;
+          if (axis === 'x') {
+            pin.rotation.x = Math.PI / 2;
+          } else {
+            pin.rotation.z = Math.PI / 2;
+          }
           group.add(pin);
 
           for (const seg of scaledArmSegments) {
-            const geo = new THREE.BoxGeometry(seg.half[0] * 2, seg.half[1] * 2, seg.half[2] * 2);
+            const geo =
+              axis === 'x'
+                ? new THREE.BoxGeometry(seg.half[0] * 2, seg.half[1] * 2, seg.half[2] * 2)
+                : new THREE.BoxGeometry(seg.half[2] * 2, seg.half[1] * 2, seg.half[0] * 2);
             const mesh = new THREE.Mesh(geo, seg.isTip ? armTipMat : armMetalMat);
-            mesh.position.set(side * seg.pos[0], seg.pos[1], seg.pos[2]);
-            mesh.rotation.z = side * seg.rotZ;
+            if (axis === 'x') {
+              mesh.position.set(side * seg.pos[0], seg.pos[1], seg.pos[2]);
+              mesh.rotation.z = side * seg.rotZ;
+            } else {
+              mesh.position.set(seg.pos[2], seg.pos[1], side * seg.pos[0]);
+              mesh.rotation.x = -side * seg.rotZ;
+            }
             mesh.castShadow = true;
             group.add(mesh);
 
@@ -1134,8 +1154,10 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           return group;
         };
 
-        const leftArmVisual = buildArmVisual(-1);
-        const rightArmVisual = buildArmVisual(1);
+        const leftArmVisual = buildArmVisual(-1, 'x');
+        const rightArmVisual = buildArmVisual(1, 'x');
+        const backArmVisual = isPlushMachine ? buildArmVisual(-1, 'z') : null;
+        const frontArmVisual = isPlushMachine ? buildArmVisual(1, 'z') : null;
 
         const cableMesh = new THREE.Mesh(
           new THREE.CylinderGeometry(0.02, 0.02, 1, 8),
@@ -1276,27 +1298,42 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           bi.AddBody(bi.CreateBody(wallBCS).GetID(), Jolt.EActivation_DontActivate);
         });
 
-        const frontRampBCS = new Jolt.BodyCreationSettings(
-          new Jolt.BoxShape(new Jolt.Vec3(GACHA_PHYSICS.BAR_LENGTH / 2, 0.03, 0.42), 0.01),
-          new Jolt.RVec3(0, 1.24, 1.86),
-          Jolt.Quat.prototype.sRotation(new Jolt.Vec3(1, 0, 0), -0.72),
-          Jolt.EMotionType_Static,
-          LAYER_ENV
-        );
-        frontRampBCS.mFriction = 0.22;
-        frontRampBCS.mRestitution = 0.0;
-        bi.AddBody(bi.CreateBody(frontRampBCS).GetID(), Jolt.EActivation_DontActivate);
+        if (isPlushMachine) {
+          [-1.92, 1.92].forEach((wz) => {
+            const fbBCS = new Jolt.BodyCreationSettings(
+              new Jolt.BoxShape(new Jolt.Vec3(GACHA_PHYSICS.CABINET_HALF_X + 0.12, 1.55, 0.08), 0.02),
+              new Jolt.RVec3(0, 1.35, wz),
+              Jolt.Quat.prototype.sIdentity(),
+              Jolt.EMotionType_Static,
+              LAYER_ENV
+            );
+            fbBCS.mFriction = 0.22;
+            fbBCS.mRestitution = 0.0;
+            bi.AddBody(bi.CreateBody(fbBCS).GetID(), Jolt.EActivation_DontActivate);
+          });
+        } else {
+          const frontRampBCS = new Jolt.BodyCreationSettings(
+            new Jolt.BoxShape(new Jolt.Vec3(GACHA_PHYSICS.BAR_LENGTH / 2, 0.03, 0.42), 0.01),
+            new Jolt.RVec3(0, 1.24, 1.86),
+            Jolt.Quat.prototype.sRotation(new Jolt.Vec3(1, 0, 0), -0.72),
+            Jolt.EMotionType_Static,
+            LAYER_ENV
+          );
+          frontRampBCS.mFriction = 0.22;
+          frontRampBCS.mRestitution = 0.0;
+          bi.AddBody(bi.CreateBody(frontRampBCS).GetID(), Jolt.EActivation_DontActivate);
 
-        const backRampBCS = new Jolt.BodyCreationSettings(
-          new Jolt.BoxShape(new Jolt.Vec3(GACHA_PHYSICS.BAR_LENGTH / 2, 0.03, 0.42), 0.01),
-          new Jolt.RVec3(0, 1.24, -1.86),
-          Jolt.Quat.prototype.sRotation(new Jolt.Vec3(1, 0, 0), 0.72),
-          Jolt.EMotionType_Static,
-          LAYER_ENV
-        );
-        backRampBCS.mFriction = 0.22;
-        backRampBCS.mRestitution = 0.0;
-        bi.AddBody(bi.CreateBody(backRampBCS).GetID(), Jolt.EActivation_DontActivate);
+          const backRampBCS = new Jolt.BodyCreationSettings(
+            new Jolt.BoxShape(new Jolt.Vec3(GACHA_PHYSICS.BAR_LENGTH / 2, 0.03, 0.42), 0.01),
+            new Jolt.RVec3(0, 1.24, -1.86),
+            Jolt.Quat.prototype.sRotation(new Jolt.Vec3(1, 0, 0), 0.72),
+            Jolt.EMotionType_Static,
+            LAYER_ENV
+          );
+          backRampBCS.mFriction = 0.22;
+          backRampBCS.mRestitution = 0.0;
+          bi.AddBody(bi.CreateBody(backRampBCS).GetID(), Jolt.EActivation_DontActivate);
+        }
 
         const floorBCS = new Jolt.BodyCreationSettings(
           new Jolt.BoxShape(new Jolt.Vec3(2.2, 0.1, 2.3), 0.02),
@@ -1309,9 +1346,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         floorBCS.mRestitution = 0.05;
         bi.AddBody(bi.CreateBody(floorBCS).GetID(), Jolt.EActivation_DontActivate);
 
-        // 5. Real Articulated UFO Crane Rig (Gantry ↔ SixDOF ↔ Head ↔ 2× Hinge ↔ 2× Claw Arm)
+        // 5. Real Articulated UFO Crane Rig (Gantry ↔ SixDOF ↔ Head ↔ 2× or 4× Hinge ↔ Claw Arms)
         const homeX = isPlushMachine ? PLUSH_CHUTE_HOME_X : GACHA_PHYSICS.CLAW_HOME_X;
-        const homeY = GACHA_PHYSICS.CLAW_HOME_Y;
+        const homeY = isPlushMachine ? effectiveLiftY : GACHA_PHYSICS.CLAW_HOME_Y;
         const homeZ = isPlushMachine ? PLUSH_CHUTE_HOME_Z : GACHA_PHYSICS.CLAW_HOME_Z;
 
         const gantryBody = bi.CreateBody(
@@ -1348,7 +1385,11 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         sixSettings.mPosition1 = new Jolt.RVec3(homeX, homeY, homeZ);
         sixSettings.mPosition2 = new Jolt.RVec3(homeX, homeY, homeZ);
         sixSettings.SetLimitedAxis(Jolt.SixDOFConstraintSettings_EAxis_TranslationX, -0.22, 0.22);
-        sixSettings.SetLimitedAxis(Jolt.SixDOFConstraintSettings_EAxis_TranslationY, -2.55, 0.18);
+        sixSettings.SetLimitedAxis(
+          Jolt.SixDOFConstraintSettings_EAxis_TranslationY,
+          isPlushMachine ? -3.05 : -2.55,
+          isPlushMachine ? 0.22 : 0.18
+        );
         sixSettings.SetLimitedAxis(Jolt.SixDOFConstraintSettings_EAxis_TranslationZ, -0.22, 0.22);
         sixSettings.SetLimitedAxis(Jolt.SixDOFConstraintSettings_EAxis_RotationX, -0.26, 0.26);
         sixSettings.MakeFixedAxis(Jolt.SixDOFConstraintSettings_EAxis_RotationY);
@@ -1389,22 +1430,32 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           sixConstraint.SetMotorState(ax, Jolt.EMotorState_Position);
         }
 
-        const createClawArm = (side: -1 | 1) => {
+        const createClawArm = (side: -1 | 1, axis: 'x' | 'z' = 'x') => {
           const comp = new Jolt.StaticCompoundShapeSettings();
           for (const seg of scaledArmSegments) {
-            comp.AddShape(
-              new Jolt.Vec3(side * seg.pos[0], seg.pos[1], seg.pos[2]),
-              Jolt.Quat.prototype.sRotation(new Jolt.Vec3(0, 0, 1), side * seg.rotZ),
-              new Jolt.BoxShapeSettings(new Jolt.Vec3(seg.half[0], seg.half[1], seg.half[2]), 0.008),
-              0
-            );
+            if (axis === 'x') {
+              comp.AddShape(
+                new Jolt.Vec3(side * seg.pos[0], seg.pos[1], seg.pos[2]),
+                Jolt.Quat.prototype.sRotation(new Jolt.Vec3(0, 0, 1), side * seg.rotZ),
+                new Jolt.BoxShapeSettings(new Jolt.Vec3(seg.half[0], seg.half[1], seg.half[2]), 0.008),
+                0
+              );
+            } else {
+              comp.AddShape(
+                new Jolt.Vec3(seg.pos[2], seg.pos[1], side * seg.pos[0]),
+                Jolt.Quat.prototype.sRotation(new Jolt.Vec3(1, 0, 0), -side * seg.rotZ),
+                new Jolt.BoxShapeSettings(new Jolt.Vec3(seg.half[2], seg.half[1], seg.half[0]), 0.008),
+                0
+              );
+            }
           }
           const shapeRes = comp.Create();
-          const pivotX = homeX + side * armPivotX;
+          const pivotX = axis === 'x' ? homeX + side * armPivotX : homeX;
           const pivotY = homeY - 0.02;
+          const pivotZ = axis === 'z' ? homeZ + side * armPivotX : homeZ;
           const abcs = new Jolt.BodyCreationSettings(
             shapeRes.Get(),
-            new Jolt.RVec3(pivotX, pivotY, homeZ),
+            new Jolt.RVec3(pivotX, pivotY, pivotZ),
             Jolt.Quat.prototype.sIdentity(),
             Jolt.EMotionType_Dynamic,
             LAYER_ARM
@@ -1420,16 +1471,17 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           const armBody = bi.CreateBody(abcs);
           bi.AddBody(armBody.GetID(), Jolt.EActivation_Activate);
 
+          const openSign = axis === 'x' ? side : -side;
           const hs = new Jolt.HingeConstraintSettings();
           hs.mSpace = Jolt.EConstraintSpace_WorldSpace;
-          hs.mPoint1 = new Jolt.RVec3(pivotX, pivotY, homeZ);
-          hs.mPoint2 = new Jolt.RVec3(pivotX, pivotY, homeZ);
-          hs.mHingeAxis1 = new Jolt.Vec3(0, 0, 1);
-          hs.mHingeAxis2 = new Jolt.Vec3(0, 0, 1);
-          hs.mNormalAxis1 = new Jolt.Vec3(1, 0, 0);
-          hs.mNormalAxis2 = new Jolt.Vec3(1, 0, 0);
-          hs.mLimitsMin = side > 0 ? -0.10 : -1.18;
-          hs.mLimitsMax = side > 0 ? 1.18 : 0.10;
+          hs.mPoint1 = new Jolt.RVec3(pivotX, pivotY, pivotZ);
+          hs.mPoint2 = new Jolt.RVec3(pivotX, pivotY, pivotZ);
+          hs.mHingeAxis1 = axis === 'x' ? new Jolt.Vec3(0, 0, 1) : new Jolt.Vec3(1, 0, 0);
+          hs.mHingeAxis2 = axis === 'x' ? new Jolt.Vec3(0, 0, 1) : new Jolt.Vec3(1, 0, 0);
+          hs.mNormalAxis1 = axis === 'x' ? new Jolt.Vec3(1, 0, 0) : new Jolt.Vec3(0, 0, 1);
+          hs.mNormalAxis2 = axis === 'x' ? new Jolt.Vec3(1, 0, 0) : new Jolt.Vec3(0, 0, 1);
+          hs.mLimitsMin = openSign > 0 ? -0.10 : -1.18;
+          hs.mLimitsMax = openSign > 0 ? 1.18 : 0.10;
           const hc = Jolt.castObject(hs.Create(headBody, armBody), Jolt.HingeConstraint);
           ps.AddConstraint(hc);
 
@@ -1440,13 +1492,16 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           hm.mMinTorqueLimit = -tuning.closeTorque;
           hm.mMaxTorqueLimit = tuning.closeTorque;
           hc.SetMotorState(Jolt.EMotorState_Position);
-          hc.SetTargetAngle(side * CLAW_OPEN_ANGLE);
+          hc.SetTargetAngle(openSign * CLAW_OPEN_ANGLE);
 
-          return { body: armBody, hinge: hc };
+          return { body: armBody, hinge: hc, openSign };
         };
 
-        const leftArm = createClawArm(-1);
-        const rightArm = createClawArm(1);
+        const leftArm = createClawArm(-1, 'x');
+        const rightArm = createClawArm(1, 'x');
+        const backArm = isPlushMachine ? createClawArm(-1, 'z') : null;
+        const frontArm = isPlushMachine ? createClawArm(1, 'z') : null;
+        const allArms = [leftArm, rightArm, ...(backArm ? [backArm] : []), ...(frontArm ? [frontArm] : [])];
 
         // 6. 동적 상품 맵 (MongoDB GachaBoxItem[] 1:1 동기화)
         interface PrizeEntity {
@@ -1654,17 +1709,17 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         };
 
         const setArmTorques = (maxTorque: number) => {
-          const lm = leftArm.hinge.GetMotorSettings();
-          lm.mMinTorqueLimit = -maxTorque;
-          lm.mMaxTorqueLimit = maxTorque;
-          const rm = rightArm.hinge.GetMotorSettings();
-          rm.mMinTorqueLimit = -maxTorque;
-          rm.mMaxTorqueLimit = maxTorque;
+          for (const a of allArms) {
+            const m = a.hinge.GetMotorSettings();
+            m.mMinTorqueLimit = -maxTorque;
+            m.mMaxTorqueLimit = maxTorque;
+          }
         };
 
         const setArmTargets = (openRad: number) => {
-          leftArm.hinge.SetTargetAngle(-openRad);
-          rightArm.hinge.SetTargetAngle(openRad);
+          for (const a of allArms) {
+            a.hinge.SetTargetAngle(a.openSign * openRad);
+          }
         };
 
         const resetClawToHome = () => {
@@ -1693,6 +1748,17 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           tmpRVec.Set(homeX + armPivotX, homeY - 0.02, homeZ);
           bi.SetPositionAndRotation(rightArm.body.GetID(), tmpRVec, tmpIdQuat, Jolt.EActivation_Activate);
           bi.SetLinearAndAngularVelocity(rightArm.body.GetID(), tmpZeroVec, tmpZeroVec);
+
+          if (backArm) {
+            tmpRVec.Set(homeX, homeY - 0.02, homeZ - armPivotX);
+            bi.SetPositionAndRotation(backArm.body.GetID(), tmpRVec, tmpIdQuat, Jolt.EActivation_Activate);
+            bi.SetLinearAndAngularVelocity(backArm.body.GetID(), tmpZeroVec, tmpZeroVec);
+          }
+          if (frontArm) {
+            tmpRVec.Set(homeX, homeY - 0.02, homeZ + armPivotX);
+            bi.SetPositionAndRotation(frontArm.body.GetID(), tmpRVec, tmpIdQuat, Jolt.EActivation_Activate);
+            bi.SetLinearAndAngularVelocity(frontArm.body.GetID(), tmpZeroVec, tmpZeroVec);
+          }
 
           tmpVec.Set(0, 0, 0);
           sixConstraint.SetTargetPositionCS(tmpVec);
@@ -1728,8 +1794,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
 
         const applyLiveTuning = (t: PhysicsTuning) => {
           motorY.mMinForceLimit = -t.downPressForce;
-          bi.SetFriction(leftArm.body.GetID(), t.clawTipFriction);
-          bi.SetFriction(rightArm.body.GetID(), t.clawTipFriction);
+          for (const a of allArms) {
+            bi.SetFriction(a.body.GetID(), t.clawTipFriction);
+          }
           for (const rid of redRingBodyIds) {
             bi.SetFriction(rid, t.barRingFriction);
           }
@@ -1888,6 +1955,19 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             rightArmVisual.position.lerp(tmpSpecPos, sAlpha);
             rightArmVisual.quaternion.slerp(tmpSpecQuat, sAlpha);
 
+            if (backArmVisual && sf.backArmPos && sf.backArmQuat) {
+              tmpSpecPos.set(sf.backArmPos[0], sf.backArmPos[1], sf.backArmPos[2]);
+              tmpSpecQuat.set(sf.backArmQuat[0], sf.backArmQuat[1], sf.backArmQuat[2], sf.backArmQuat[3]);
+              backArmVisual.position.lerp(tmpSpecPos, sAlpha);
+              backArmVisual.quaternion.slerp(tmpSpecQuat, sAlpha);
+            }
+            if (frontArmVisual && sf.frontArmPos && sf.frontArmQuat) {
+              tmpSpecPos.set(sf.frontArmPos[0], sf.frontArmPos[1], sf.frontArmPos[2]);
+              tmpSpecQuat.set(sf.frontArmQuat[0], sf.frontArmQuat[1], sf.frontArmQuat[2], sf.frontArmQuat[3]);
+              frontArmVisual.position.lerp(tmpSpecPos, sAlpha);
+              frontArmVisual.quaternion.slerp(tmpSpecQuat, sAlpha);
+            }
+
             gantryBeam.position.z = THREE.MathUtils.lerp(gantryBeam.position.z, sf.gantryZ, sAlpha);
             trolleyMesh.position.set(
               THREE.MathUtils.lerp(trolleyMesh.position.x, sf.gantryX, sAlpha),
@@ -2002,7 +2082,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             sim.phaseTimer += dt;
             const prevTargetY = sim.targetHeadY;
             sim.targetHeadY = Math.min(
-              GACHA_PHYSICS.CLAW_LIFT_Y,
+              effectiveLiftY,
               sim.targetHeadY + 0.58 * dt
             );
 
@@ -2044,14 +2124,14 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
               }
             }
 
-            const reachedTop = prevTargetY >= GACHA_PHYSICS.CLAW_LIFT_Y - 0.005;
+            const reachedTop = prevTargetY >= effectiveLiftY - 0.005;
             if (reachedTop) sim.liftTopHoldTimer += dt;
             else sim.liftTopHoldTimer = 0;
 
             // 최고점 도달 후 상승 관성이 잠잠해질 때까지(0.22s) 잠깐 정지한 뒤:
             // - 3D 인형 산더미 모드: 집게를 문 상태 그대로 배출구(초기 위치)까지 운반(carrying)
             // - 하시와타시 박스 모드: 제자리에서 집게 벌림(releasing)
-            if ((reachedTop && sim.liftTopHoldTimer >= 0.22) || sim.phaseTimer >= 3.8) {
+            if ((reachedTop && sim.liftTopHoldTimer >= 0.22) || sim.phaseTimer >= 4.4) {
               sim.phaseTimer = 0;
               if (isPlushMachine) {
                 sim.carryStopHoldTimer = 0;
@@ -2069,7 +2149,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           } else if (curPhase === 'carrying') {
             // 3D 인형뽑기 전용: 집게가 물고 있는 상태를 유지하며 배출구(초기 위치)까지 부드럽게 운반
             sim.phaseTimer += dt;
-            sim.targetHeadY = GACHA_PHYSICS.CLAW_LIFT_Y;
+            sim.targetHeadY = effectiveLiftY;
             setArmTorques(tuningRef.current.liftTorque);
             setArmTargets(-0.02);
 
@@ -2243,6 +2323,23 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           rightArmVisual.position.set(rp.GetX(), rp.GetY(), rp.GetZ());
           rightArmVisual.quaternion.set(rq.GetX(), rq.GetY(), rq.GetZ(), rq.GetW());
 
+          let bpArm: JoltNS.RVec3 | null = null;
+          let bqArm: JoltNS.Quat | null = null;
+          if (backArm && backArmVisual) {
+            bpArm = backArm.body.GetPosition();
+            bqArm = backArm.body.GetRotation();
+            backArmVisual.position.set(bpArm.GetX(), bpArm.GetY(), bpArm.GetZ());
+            backArmVisual.quaternion.set(bqArm.GetX(), bqArm.GetY(), bqArm.GetZ(), bqArm.GetW());
+          }
+          let fpArm: JoltNS.RVec3 | null = null;
+          let fqArm: JoltNS.Quat | null = null;
+          if (frontArm && frontArmVisual) {
+            fpArm = frontArm.body.GetPosition();
+            fqArm = frontArm.body.GetRotation();
+            frontArmVisual.position.set(fpArm.GetX(), fpArm.GetY(), fpArm.GetZ());
+            frontArmVisual.quaternion.set(fqArm.GetX(), fqArm.GetY(), fqArm.GetZ(), fqArm.GetW());
+          }
+
           gantryBeam.position.z = sim.gantryZ;
           trolleyMesh.position.set(sim.gantryX, 3.82, sim.gantryZ);
 
@@ -2264,7 +2361,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           aimRing.visible = showAim;
           aimBeam.visible = showAim;
           if (showAim) {
-            const aimBaseY = isPlushMachine ? PLUSH_FLOOR_Y + 0.05 : GACHA_PHYSICS.BAR_Y + 0.12;
+            const aimBaseY = isPlushMachine ? PLUSH_FLOOR_Y + PLUSH_CHUTE_WALL_HEIGHT : GACHA_PHYSICS.BAR_Y + 0.12;
             aimRing.position.set(hp.GetX(), aimBaseY, hp.GetZ());
             const beamH = Math.max(0.2, hp.GetY() - aimBaseY);
             aimBeam.scale.y = beamH / 1.7;
@@ -2326,6 +2423,18 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                 leftArmQuat: [Number(lq.GetX().toFixed(4)), Number(lq.GetY().toFixed(4)), Number(lq.GetZ().toFixed(4)), Number(lq.GetW().toFixed(4))],
                 rightArmPos: [Number(rp.GetX().toFixed(3)), Number(rp.GetY().toFixed(3)), Number(rp.GetZ().toFixed(3))],
                 rightArmQuat: [Number(rq.GetX().toFixed(4)), Number(rq.GetY().toFixed(4)), Number(rq.GetZ().toFixed(4)), Number(rq.GetW().toFixed(4))],
+                ...(bpArm && bqArm
+                  ? {
+                      backArmPos: [Number(bpArm.GetX().toFixed(3)), Number(bpArm.GetY().toFixed(3)), Number(bpArm.GetZ().toFixed(3))],
+                      backArmQuat: [Number(bqArm.GetX().toFixed(4)), Number(bqArm.GetY().toFixed(4)), Number(bqArm.GetZ().toFixed(4)), Number(bqArm.GetW().toFixed(4))],
+                    }
+                  : {}),
+                ...(fpArm && fqArm
+                  ? {
+                      frontArmPos: [Number(fpArm.GetX().toFixed(3)), Number(fpArm.GetY().toFixed(3)), Number(fpArm.GetZ().toFixed(3))],
+                      frontArmQuat: [Number(fqArm.GetX().toFixed(4)), Number(fqArm.GetY().toFixed(4)), Number(fqArm.GetZ().toFixed(4)), Number(fqArm.GetW().toFixed(4))],
+                    }
+                  : {}),
                 items: liveItems,
                 effect: liveEffectRef.current.effect,
                 effectSeq: liveEffectRef.current.seq,
