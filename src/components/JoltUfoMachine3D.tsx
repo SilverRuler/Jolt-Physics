@@ -600,10 +600,11 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           setSpectatePhase(frame.phase || '');
           if (frame.effect && typeof frame.effectSeq === 'number' && frame.effectSeq !== lastSpectateEffectSeqRef.current) {
             lastSpectateEffectSeqRef.current = frame.effectSeq;
+            const plushSpec = isPlushSlot(machineIndex);
             if (frame.effect === 'start') triggerStartPopup(false);
-            else if (frame.effect === 'balance_catch') triggerBalanceCatch();
-            else if (frame.effect === 'extreme_drr') triggerExtremeDrr();
-            else if (frame.effect === 'near_near') triggerNearNear();
+            else if (!plushSpec && frame.effect === 'balance_catch') triggerBalanceCatch();
+            else if (!plushSpec && frame.effect === 'extreme_drr') triggerExtremeDrr();
+            else if (!plushSpec && frame.effect === 'near_near') triggerNearNear();
             else if (frame.effect === 'finish_win') triggerFinishWin();
           }
         }
@@ -650,7 +651,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         curItems.length > 0 && curItems.every((it) => isBoxAtInitialPose(it));
       simControlRef.current?.prepareTurnStart(curItems);
       setCranePhase('ready_right');
-      triggerStartPopup(isInitialPoseOnly);
+      triggerStartPopup(isInitialPoseOnly || isPlushSlot(machineIndex));
     } else if (!isMyTurn && phaseRef.current !== 'idle') {
       setCranePhase('idle');
     }
@@ -987,8 +988,8 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           : [];
         const plushChuteGuards = isPlushMachine
           ? [
-              { cx: -0.56, cy: PLUSH_FLOOR_Y + 0.18, cz: 1.14, w: 0.06, h: 0.36, d: 1.48 },
-              { cx: -1.17, cy: PLUSH_FLOOR_Y + 0.18, cz: 0.40, w: 1.22, h: 0.36, d: 0.06 },
+              { cx: -0.56, cy: PLUSH_FLOOR_Y + 0.31, cz: 1.14, w: 0.06, h: 0.62, d: 1.48 },
+              { cx: -1.17, cy: PLUSH_FLOOR_Y + 0.31, cz: 0.40, w: 1.22, h: 0.62, d: 0.06 },
             ]
           : [];
         if (isPlushMachine) {
@@ -1020,7 +1021,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             gm.position.set(g.cx, g.cy, g.cz);
             cabinetGroup.add(gm);
             const rim = new THREE.Mesh(new THREE.BoxGeometry(g.w + 0.015, 0.03, g.d + 0.015), guardRimMat);
-            rim.position.set(g.cx, PLUSH_FLOOR_Y + 0.365, g.cz);
+            rim.position.set(g.cx, PLUSH_FLOOR_Y + 0.625, g.cz);
             cabinetGroup.add(rim);
           }
           const chuteSignCanvas = document.createElement('canvas');
@@ -1979,7 +1980,8 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           } else if (curPhase === 'closing') {
             sim.phaseTimer += dt;
             const prog = Math.min(1, sim.phaseTimer / 0.52);
-            const targetAng = CLAW_OPEN_ANGLE * (1 - prog) + CLAW_CLOSE_TARGET * prog;
+            const activeCloseTarget = isPlushMachine ? -0.02 : CLAW_CLOSE_TARGET;
+            const targetAng = CLAW_OPEN_ANGLE * (1 - prog) + activeCloseTarget * prog;
             setArmTargets(targetAng);
 
             if (sim.phaseTimer >= 0.62) {
@@ -1992,7 +1994,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                 sim.liftStartY.set(ent.data.id, ent.body.GetPosition().GetY());
               }
               setArmTorques(tuningRef.current.liftTorque);
-              setArmTargets(CLAW_CLOSE_TARGET);
+              setArmTargets(activeCloseTarget);
               setCranePhase('lifting');
               playTone(587.33, 0.12);
             }
@@ -2005,7 +2007,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             );
 
             // 실제 물리적 리프트 감지 -> Balance Catch! (초기 원위치 정중앙) / 극한 드르륵! (비초기 중앙 빨간 Bar 근처)
-            if (!sim.effectTriggeredThisTurn && sim.phaseTimer >= 0.12) {
+            if (!isPlushMachine && !sim.effectTriggeredThisTurn && sim.phaseTimer >= 0.12) {
               const headPos = headBody.GetPosition();
               for (const ent of prizeEntities.values()) {
                 if (sim.wonSet.has(ent.data.id)) continue;
@@ -2054,7 +2056,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
               if (isPlushMachine) {
                 sim.carryStopHoldTimer = 0;
                 setArmTorques(tuningRef.current.liftTorque);
-                setArmTargets(CLAW_CLOSE_TARGET);
+                setArmTargets(-0.02);
                 setCranePhase('carrying');
                 playTone(493.88, 0.1);
               } else {
@@ -2069,7 +2071,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             sim.phaseTimer += dt;
             sim.targetHeadY = GACHA_PHYSICS.CLAW_LIFT_Y;
             setArmTorques(tuningRef.current.liftTorque);
-            setArmTargets(CLAW_CLOSE_TARGET);
+            setArmTargets(-0.02);
 
             const dx = homeX - sim.gantryX;
             const dz = homeZ - sim.gantryZ;
@@ -2201,6 +2203,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                   setDroppedThisTurn(sim.wonSet.size);
                   triggerFinishWin();
                 } else if (
+                  !isPlushMachine &&
                   !sim.wonSet.has(ent.data.id) &&
                   !sim.nearNearTriggeredThisTurn &&
                   (curPhase === 'releasing' || curPhase === 'settling') &&
