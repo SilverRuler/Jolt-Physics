@@ -20,6 +20,7 @@ import {
   Maximize2,
   Minimize2,
   LayoutGrid,
+  Shuffle,
   X,
 } from 'lucide-react';
 import { GachaBoxItem } from '@/types/gacha';
@@ -2372,6 +2373,22 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
               >
                 <LayoutGrid className="w-3.5 h-3.5" />
                 <span>선택</span>
+              </button>
+              <button
+                type="button"
+                disabled={isCraneLockedToFront || !machineSummaries.some((m) => m.hasStock)}
+                onClick={() => {
+                  const stocked = machineSummaries.filter((m) => m.hasStock);
+                  if (stocked.length === 0) return;
+                  const pool = stocked.length > 1 ? stocked.filter((m) => m.index !== machineIndex) : stocked;
+                  const picked = pool[Math.floor(Math.random() * pool.length)];
+                  if (picked) onSelectMachine?.(picked.index);
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-gradient-to-r from-fuchsia-500/25 to-amber-500/25 hover:from-fuchsia-500/35 hover:to-amber-500/35 border border-fuchsia-400/60 text-fuchsia-200 text-[11px] font-black shrink-0 shadow-sm cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed transition-all"
+                title="재고가 남은 뽑기판 중 랜덤 선택"
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                <span>랜덤</span>
               </button>
               <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar min-w-0 flex-1">
                 {machineSummaries.map((ms) => {
