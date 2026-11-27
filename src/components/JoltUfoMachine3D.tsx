@@ -145,7 +145,7 @@ interface GachaLiveFrame {
     position: [number, number, number];
     quaternion: [number, number, number, number];
   }>;
-  effect?: 'start' | 'balance_catch' | 'extreme_drr' | 'near_near' | 'finish_win' | null;
+  effect?: 'start' | 'balance_catch' | 'extreme_drr' | 'near_near' | 'finish_win' | 'strong_grip' | null;
   effectSeq?: number;
   ts: number;
 }
@@ -387,6 +387,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
   const [showStartPopup, setShowStartPopup] = useState(false);
   const [showNearNear, setShowNearNear] = useState(false);
   const [showFinishWin, setShowFinishWin] = useState(false);
+  const [showStrongGrip, setShowStrongGrip] = useState(false);
   const [spectateLiveActive, setSpectateLiveActive] = useState(false);
   const [spectatePhase, setSpectatePhase] = useState<string>('');
   const [isMachinePickerOpen, setIsMachinePickerOpen] = useState(false);
@@ -450,11 +451,13 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
   const nearAudio1Ref = useRef<HTMLAudioElement | null>(null);
   const nearAudio2Ref = useRef<HTMLAudioElement | null>(null);
   const finishAudioRef = useRef<HTMLAudioElement | null>(null);
+  const powerupAudioRef = useRef<HTMLAudioElement | null>(null);
   const drrTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bcTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finishTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const strongGripTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   itemsRef.current = items;
   tuningRef.current = tuning;
@@ -492,6 +495,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
     nearAudio1Ref.current = mkAudio('/assets/nearnear.mp3', 0.9);
     nearAudio2Ref.current = mkAudio('/assets/nearnear2.mp3', 0.9);
     finishAudioRef.current = mkAudio('/assets/finish.mp3', 0.92);
+    powerupAudioRef.current = mkAudio('/assets/powerup.wav', 0.92);
 
     return () => {
       if (drrTimeoutRef.current) clearTimeout(drrTimeoutRef.current);
@@ -499,6 +503,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
       if (startTimeoutRef.current) clearTimeout(startTimeoutRef.current);
       if (nearTimeoutRef.current) clearTimeout(nearTimeoutRef.current);
       if (finishTimeoutRef.current) clearTimeout(finishTimeoutRef.current);
+      if (strongGripTimeoutRef.current) clearTimeout(strongGripTimeoutRef.current);
     };
   }, []);
 
@@ -606,6 +611,21 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
     }
   }, []);
 
+  const triggerStrongGrip = useCallback(() => {
+    setShowStrongGrip(true);
+    if (isMyTurnRef.current) {
+      liveEffectRef.current = { effect: 'strong_grip', seq: liveEffectRef.current.seq + 1 };
+    }
+    if (strongGripTimeoutRef.current) clearTimeout(strongGripTimeoutRef.current);
+    strongGripTimeoutRef.current = setTimeout(() => setShowStrongGrip(false), 1600);
+    if (soundEnabledRef.current && powerupAudioRef.current) {
+      try {
+        powerupAudioRef.current.currentTime = 0;
+        powerupAudioRef.current.play().catch(() => {});
+      } catch {}
+    }
+  }, []);
+
   // 실시간 관전 SSE 구독 (다른 플레이어가 진행 중일 때만 연결)
   useEffect(() => {
     if (sandboxMode || !lockedByOther || isMyTurn) {
@@ -638,6 +658,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             else if (!plushSpec && frame.effect === 'balance_catch') triggerBalanceCatch();
             else if (!plushSpec && frame.effect === 'extreme_drr') triggerExtremeDrr();
             else if (!plushSpec && frame.effect === 'near_near') triggerNearNear();
+            else if (frame.effect === 'strong_grip') triggerStrongGrip();
             else if (frame.effect === 'finish_win') triggerFinishWin();
           }
         }
@@ -661,6 +682,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
     triggerExtremeDrr,
     triggerNearNear,
     triggerFinishWin,
+    triggerStrongGrip,
   ]);
 
   const freeMoveKeysRef = useRef<{ up: boolean; down: boolean; left: boolean; right: boolean }>({
@@ -1319,18 +1341,58 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         );
         scene.add(cableMesh);
 
-        const aimRing = new THREE.Mesh(
-          new THREE.RingGeometry(0.14, 0.21, 24),
-          new THREE.MeshBasicMaterial({ color: '#22d3ee', transparent: true, opacity: 0.8, side: THREE.DoubleSide })
-        );
+        const aimRingMat = new THREE.MeshBasicMaterial({
+          color: '#22d3ee',
+          transparent: true,
+          opacity: 0.85,
+          side: THREE.DoubleSide,
+        });
+        const aimRing = new THREE.Mesh(new THREE.RingGeometry(0.14, 0.21, 24), aimRingMat);
         aimRing.rotation.x = -Math.PI / 2;
+        aimRing.renderOrder = 5;
         scene.add(aimRing);
 
-        const aimBeam = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.01, 0.01, 1.7, 8),
-          new THREE.MeshBasicMaterial({ color: '#22d3ee', transparent: true, opacity: 0.28 })
-        );
+        const aimBeamMat = new THREE.MeshBasicMaterial({
+          color: '#22d3ee',
+          transparent: true,
+          opacity: 0.32,
+        });
+        const aimBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 1.7, 8), aimBeamMat);
         scene.add(aimBeam);
+
+        const aimRaycaster = new THREE.Raycaster();
+        const aimRayOrigin = new THREE.Vector3();
+        const aimRayDown = new THREE.Vector3(0, -1, 0);
+        const plushRaycastMeshes: THREE.Object3D[] = [];
+        const updateAimLaser = (ax: number, headY: number, az: number) => {
+          let aimBaseY = GACHA_PHYSICS.BAR_Y + 0.12;
+          let hitPlush = false;
+          if (isPlushMachine) {
+            plushRaycastMeshes.length = 0;
+            for (const ent of prizeEntities.values()) {
+              ent.mesh.updateMatrixWorld();
+              plushRaycastMeshes.push(ent.mesh);
+            }
+            aimRayOrigin.set(ax, headY, az);
+            aimRaycaster.set(aimRayOrigin, aimRayDown);
+            const hits = aimRaycaster.intersectObjects(plushRaycastMeshes, false);
+            if (hits.length > 0) {
+              aimBaseY = hits[0].point.y + 0.015;
+              hitPlush = true;
+            } else if (ax < -0.56 && az > 0.40) {
+              aimBaseY = -1.38;
+            } else {
+              aimBaseY = PLUSH_FLOOR_Y + 0.025;
+            }
+          }
+          const laserHex = hitPlush ? '#facc15' : '#22d3ee';
+          aimRingMat.color.set(laserHex);
+          aimBeamMat.color.set(laserHex);
+          aimRing.position.set(ax, aimBaseY, az);
+          const beamH = Math.max(0.05, headY - aimBaseY);
+          aimBeam.scale.y = beamH / 1.7;
+          aimBeam.position.set(ax, aimBaseY + beamH / 2, az);
+        };
 
         // 4. Jolt Physics 1.1.2 WASM World (5 Layers, 120Hz)
         const LAYER_ENV = 0;
@@ -1978,6 +2040,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           sim.carryTraveled = 0;
           sim.carryAxisStage = 'x';
           sim.carryAxisPauseTimer = 0;
+          if (sim.plushStrongGripTurn) {
+            triggerStrongGrip();
+          }
           // 하강 시작 시 상품 바디 활성화 (3D 산더미는 크레인 주변만 우선 활성화하여 150개 고속 유지)
           for (const ent of prizeEntities.values()) {
             if (isPlushMachine) {
@@ -2198,13 +2263,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             aimRing.visible = specShowAim;
             aimBeam.visible = specShowAim;
             if (specShowAim) {
-              const aimBaseYSpec = isPlushMachine
-                ? PLUSH_FLOOR_Y + PLUSH_CHUTE_WALL_HEIGHT
-                : GACHA_PHYSICS.BAR_Y + 0.12;
-              aimRing.position.set(ufoHeadGroup.position.x, aimBaseYSpec, ufoHeadGroup.position.z);
-              const beamH = Math.max(0.2, ufoHeadGroup.position.y - aimBaseYSpec);
-              aimBeam.scale.y = beamH / 1.7;
-              aimBeam.position.set(ufoHeadGroup.position.x, aimBaseYSpec + beamH / 2, ufoHeadGroup.position.z);
+              updateAimLaser(ufoHeadGroup.position.x, ufoHeadGroup.position.y, ufoHeadGroup.position.z);
             }
 
             for (const it of sf.items) {
@@ -2641,11 +2700,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           aimRing.visible = showAim;
           aimBeam.visible = showAim;
           if (showAim) {
-            const aimBaseY = isPlushMachine ? PLUSH_FLOOR_Y + PLUSH_CHUTE_WALL_HEIGHT : GACHA_PHYSICS.BAR_Y + 0.12;
-            aimRing.position.set(hp.GetX(), aimBaseY, hp.GetZ());
-            const beamH = Math.max(0.2, hp.GetY() - aimBaseY);
-            aimBeam.scale.y = beamH / 1.7;
-            aimBeam.position.set(hp.GetX(), aimBaseY + beamH / 2, hp.GetZ());
+            updateAimLaser(hp.GetX(), hp.GetY(), hp.GetZ());
           }
 
           const desiredPose = getCameraPose(
@@ -2768,7 +2823,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
       }
       setEngineReady(false);
     };
-  }, [machineIndex, playTone, setCranePhase, triggerExtremeDrr, triggerBalanceCatch, triggerNearNear, triggerFinishWin]);
+  }, [machineIndex, playTone, setCranePhase, triggerExtremeDrr, triggerBalanceCatch, triggerNearNear, triggerFinishWin, triggerStrongGrip]);
 
   const isCraneLockedToFront = isMyTurn || isFinishing || phase !== 'idle';
 
@@ -3387,6 +3442,14 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
           <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
             <div className="px-6 py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 border-2 border-yellow-200 text-white font-black text-xl sm:text-3xl tracking-tight shadow-[0_0_40px_rgba(249,115,22,0.85)] animate-bounce">
               ⚡ 극한 드르륵! ⚡
+            </div>
+          </div>
+        )}
+
+        {showStrongGrip && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
+            <div className="px-6 py-3 rounded-2xl bg-gradient-to-r from-violet-600 via-fuchsia-500 to-amber-400 border-2 border-yellow-200 text-white font-black text-xl sm:text-3xl tracking-tight shadow-[0_0_45px_rgba(217,70,239,0.9)] animate-bounce">
+              💪 강력 그립! ⚡
             </div>
           </div>
         )}
