@@ -1838,10 +1838,9 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
                 LAYER_PRIZE
               );
               bcs.mOverrideMassProperties = Jolt.EOverrideMassProperties_CalculateInertia;
-              bcs.mMassPropertiesOverride.mMass = Math.max(
-                0.35,
-                (plushItem ? spec.mass * 0.72 : spec.mass) * liveTuning.massScale
-              );
+              bcs.mMassPropertiesOverride.mMass = plushItem
+                ? Math.max(0.28, spec.mass * 0.32 * liveTuning.massScale)
+                : Math.max(0.35, spec.mass * liveTuning.massScale);
               bcs.mFriction = spec.friction;
               bcs.mRestitution = 0.0;
               bcs.mLinearDamping = plushItem ? 0.28 : 0.18;
