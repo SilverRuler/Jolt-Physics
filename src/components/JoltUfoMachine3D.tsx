@@ -527,7 +527,7 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
   const [spectatePhase, setSpectatePhase] = useState<string>('');
   const [isMachinePickerOpen, setIsMachinePickerOpen] = useState(false);
   const [pickerCategory, setPickerCategory] = useState<'all' | GachaMachineCategory>('all');
-  const [activeCategory, setActiveCategory] = useState<GachaMachineCategory>(() => getMachineCategory(machineIndex));
+  const [activeCategory, setActiveCategory] = useState<GachaMachineCategory | 'all'>(() => getMachineCategory(machineIndex));
   const [isSpectatePickerOpen, setIsSpectatePickerOpen] = useState(false);
   const [spectateToast, setSpectateToast] = useState<string>('');
   const machineTabsRef = useRef<HTMLDivElement>(null);
@@ -3551,14 +3551,15 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
         {/* 개별 뽑기판 빠른 전환 탭 (#1 ~ #6) + 우측 관리자 전용 개별 리필/재정렬 버튼 */}
         {machineSummaries.length > 0 && (() => {
           const liveMachines = machineSummaries.filter((m) => Boolean(m.lockedBy) && !m.suspended);
-          const categorySummaries = machineSummaries.filter((m) => getMachineCategory(m.index) === activeCategory);
+          const categorySummaries = machineSummaries.filter((m) => activeCategory === 'all' || getMachineCategory(m.index) === activeCategory);
           const availableRandomPool = categorySummaries.filter((m) => m.hasStock && !m.suspended);
+          const allCount = machineSummaries.length;
           const figureCount = machineSummaries.filter((m) => getMachineCategory(m.index) === 'figure').length;
           const plushCount = machineSummaries.filter((m) => getMachineCategory(m.index) === 'plush').length;
           const pusherCount = machineSummaries.filter((m) => getMachineCategory(m.index) === 'pusher').length;
-          const handleSelectCategory = (cat: GachaMachineCategory) => {
+          const handleSelectCategory = (cat: GachaMachineCategory | 'all') => {
             setActiveCategory(cat);
-            if (getMachineCategory(machineIndex) !== cat) {
+            if (cat !== 'all' && getMachineCategory(machineIndex) !== cat) {
               const catList = machineSummaries.filter((m) => getMachineCategory(m.index) === cat);
               const firstGood = catList.find((m) => m.hasStock && !m.suspended) || catList[0];
               if (firstGood) onSelectMachine?.(firstGood.index);
@@ -3572,7 +3573,8 @@ export const JoltUfoMachine3D: React.FC<JoltUfoMachine3DProps> = ({
             <div className="flex items-center gap-1.5 flex-wrap">
               {(
                 [
-                  { key: 'figure' as const, label: '피규어', icon: '📦', count: figureCount, activeCls: 'bg-cyan-500/25 border-cyan-400 text-cyan-100 shadow-sm shadow-cyan-500/20' },
+                  { key: 'all' as const, label: '전체', icon: '🎛️', count: allCount, activeCls: 'bg-cyan-500/25 border-cyan-400 text-cyan-100 shadow-sm shadow-cyan-500/20' },
+                  { key: 'figure' as const, label: '피규어', icon: '📦', count: figureCount, activeCls: 'bg-sky-500/25 border-sky-400 text-sky-100 shadow-sm shadow-sky-500/20' },
                   { key: 'plush' as const, label: '인형', icon: '🧸', count: plushCount, activeCls: 'bg-fuchsia-500/25 border-fuchsia-400 text-fuchsia-100 shadow-sm shadow-fuchsia-500/20' },
                   { key: 'pusher' as const, label: '밀판', icon: '⚡', count: pusherCount, activeCls: 'bg-amber-500/25 border-amber-400 text-amber-100 shadow-sm shadow-amber-500/20' },
                 ] as const
